@@ -9,8 +9,8 @@
 把要申报项目的方框改成 `[x]`，并填写对应内容：
 
 - [ ] L1 真机
-- [ ] L2 交互体验
-- [ ] 工程与产品化
+- [x] L2 交互体验
+- [x] 工程与产品化
 - [ ] 自定义量子 RISC-V Bonus
 - [ ] 新手引导与视觉叙事 Bonus
 
@@ -43,14 +43,33 @@ evidence/files/spinq-screenshot.png
 请填写：
 
 ```text
-启动界面或 CLI 的命令：[填写]
-测试入口或页面地址：[填写，没有则写“无”]
+启动界面或 CLI 的命令：python3 starter_kit/tools/loomq_chat.py
+测试入口或页面地址：无（命令行交互，无需起服务）
 适合现场体验的 3 个用户任务：
-1. [填写]
-2. [填写]
-3. [填写]
-截图或演示视频：[选填，填写仓库内路径或稳定只读链接]
+1. 输入「做一个 3 个量子比特的 GHZ 态，全部测量」，然后输入 /run —— 观察它先生成电路、
+   自己在无噪声模拟器上验证、再真跑在已安装的后端上，并把结果画成柱状图。
+2. 输入「我想要贝尔态，但这段跑不通，帮我修：H q[0]; CX q[0] q[1]」—— 观察它在保持
+   用户声明意图的前提下修好代码，而不是换成一条无关电路。
+3. 输入「我要跑 15 个比特，还不想排队，用哪个后端？」—— 观察它给出规范后端标识和
+   选择理由。可以追加「那如果要真机而且不想花钱呢？」看它换一组答案。
+截图或演示视频：无
 ```
+
+启动前需要设置组委会同款环境变量（代码里没有任何硬编码的地址、Key 或模型名）：
+
+```bash
+export LOOMQ_LLM_BASE_URL=<endpoint>
+export LOOMQ_LLM_API_KEY=<key>
+export LOOMQ_LLM_MODEL=<model>
+```
+
+一次性提问也可以：
+
+```bash
+python3 starter_kit/tools/loomq_chat.py --prompt "做一个 3 比特 GHZ 态" --run
+```
+
+设计说明见 [`starter_kit/L2_ARCHITECTURE.md`](../L2_ARCHITECTURE.md)。
 
 工作人员会在组委会统一模型环境中运行最终代码，测试新手是否看得懂、出错后能否得到有效帮助、结果是否清楚，以及多轮回答是否一致。选手自己的对话截图只用于说明产品流程，不直接证明得分。
 
@@ -59,10 +78,16 @@ evidence/files/spinq-screenshot.png
 已有内容可以直接引用主 README 或其他项目文档，不必复制到本目录。
 
 ```text
-干净环境中的构建和启动命令：[填写命令或文档路径]
-架构说明：[填写文档路径，或用几句话说明主要模块]
-目标用户和使用场景：[填写]
-完整使用流程：[填写文档、截图或演示路径]
+干净环境中的构建和启动命令：
+  pip install -r starter_kit/requirements.txt
+  python3 -m unittest discover -s tests          # 不需要任何 SDK
+  python3 starter_kit/tools/selfcheck_l1.py      # 三个后端端到端对拍
+  python3 starter_kit/tools/loomq_chat.py        # L2 交互入口
+架构说明：starter_kit/L1_ARCHITECTURE.md（中间层）、starter_kit/L2_ARCHITECTURE.md（智能体）
+目标用户和使用场景：没有量子背景、但有明确问题意识的跨界创作者。用自然语言描述想做的
+  实验，工具负责写电路、自己验证对错、选后端、真跑，并用大白话解释结果。
+完整使用流程：L2_ARCHITECTURE.md 的「怎么跑」一节，含一次完整的
+  「提问 → 自验失败 → 自动重试 → 真机后端执行」记录。
 ```
 
 工作人员会按最终 commit 实际构建和启动，并检查文档与代码是否一致、产品是否真的降低了量子计算的使用门槛。
