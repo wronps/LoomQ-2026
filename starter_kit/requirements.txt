@@ -1,5 +1,24 @@
-# Public evaluator baseline: no third-party dependencies.
-# Add project dependencies below and pin every version exactly, for example:
-# amazon-braket-sdk==<tested-version>
-# spinqit==<tested-version>
-# pyqpanda==<tested-version>
+# LoomQ L1 runtime dependencies. Every version is pinned exactly, as the rules
+# require. Python 3.10 (matches the official base image; spinqit only ships
+# cp310 wheels).
+#
+# The three vendor SDKs do NOT coexist at their latest versions. spinqit and
+# amazon-braket-default-simulator both hard-pin antlr4-python3-runtime, to
+# incompatible releases, and each one's antlr-generated parser fails at *import*
+# time under the other's runtime:
+#
+#   spinqit 0.2.4                          -> antlr4-python3-runtime==4.9.2
+#   amazon-braket-default-simulator >=1.28 -> antlr4-python3-runtime==4.13.2
+#
+# 1.27.0 is the last Braket simulator on the 4.9.2 line, and 1.97.0 is the SDK
+# released alongside it. That combination is what makes all three backends
+# importable in one interpreter. Do not bump the Braket packages without
+# re-checking `python3 starter_kit/tools/selfcheck_l1.py`.
+
+amazon-braket-sdk==1.97.0
+amazon-braket-default-simulator==1.27.0
+antlr4-python3-runtime==4.9.2
+
+spinqit==0.2.4
+
+pyqpanda==3.8.5
