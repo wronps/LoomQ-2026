@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """LoomQ submission adapter contract v1.0.
 
-L1 is implemented in the :mod:`loomq` package next to this file; this module is
-only the graded surface. L2/L3 are not entered and stay unimplemented.
+L1 lives in the :mod:`loomq` package and L2 in :mod:`loomq_agent`, both next to
+this file; this module is only the graded surface. L3 is not entered.
 """
 
 from typing import Any, Dict, List, Tuple
 
 try:  # imported as ``starter_kit.adapter``
-    from . import loomq
+    from . import loomq, loomq_agent
 except ImportError:  # imported as top-level ``adapter`` by evaluator.py
     import loomq
+    import loomq_agent
 
 
 SUPPORTED_TARGETS = ("spinq", "originq", "braket")
@@ -28,7 +29,7 @@ def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
 
 def agent_chat(prompt: str) -> str:
     """Optional L2 entry point using the documented LOOMQ_LLM_* environment."""
-    raise NotImplementedError("L2 is optional; implement agent_chat(prompt) to enter")
+    return loomq_agent.agent_chat(prompt)
 
 
 def compile_hybrid(hybrid_qasm_str: str) -> Tuple[List[str], str]:
