@@ -267,6 +267,64 @@ class BitOrderTest(unittest.TestCase):
         self.assertEqual(reference.probabilities(circuit), {"01": 1.0})
 
 
+class DiagramTest(unittest.TestCase):
+    """The drawable layout the web UI renders from."""
+
+    def plan(self, source):
+        from loomq import diagram
+
+        return diagram.layout(qasm2.parse(source))
+
+    def test_angles_render_as_multiples_of_pi(self):
+        from loomq.diagram import angle_label
+
+        self.assertEqual(angle_label(math.pi), "π")
+        self.assertEqual(angle_label(math.pi / 2), "π/2")
+        self.assertEqual(angle_label(-math.pi / 8), "-π/8")
+        self.assertEqual(angle_label(3 * math.pi / 4), "3π/4")
+        self.assertEqual(angle_label(0.0), "0")
+        self.assertEqual(angle_label(0.37), "0.37")
+
+    def test_bell_layout(self):
+        plan = self.plan((CIRCUITS / "bell.qasm").read_text(encoding="utf-8"))
+        self.assertEqual(plan["n_qubits"], 2)
+        kinds = [op["kind"] for op in plan["ops"]]
+        self.assertEqual(kinds, ["box", "controlled", "measure", "measure"])
+        self.assertEqual(plan["ops"][1]["controls"], [0])
+        self.assertEqual(plan["ops"][1]["target"], 1)
+
+    def test_measurements_share_the_final_column(self):
+        """A meter drawn left of a later gate reads as mid-circuit measurement."""
+        plan = self.plan(program(3, "h q[0];\ncx q[0],q[1];\nh q[2];\ncx q[2],q[0];"))
+        columns = {op["column"] for op in plan["ops"] if op["kind"] == "measure"}
+        gate_columns = [op["column"] for op in plan["ops"] if op["kind"] != "measure"]
+        self.assertEqual(len(columns), 1)
+        self.assertGreater(columns.pop(), max(gate_columns))
+
+    def test_cu1_draws_symmetric_with_an_angle(self):
+        plan = self.plan(program(2, "cu1(pi/4) q[0],q[1];"))
+        op = plan["ops"][0]
+        self.assertEqual(op["symbol"], "dot")
+        self.assertEqual(op["angle"], "π/4")
+
+    def test_every_whitelist_gate_has_a_plain_language_note(self):
+        from loomq.diagram import GATE_NOTES
+
+        self.assertEqual(set(WHITELIST) - set(GATE_NOTES), set())
+
+    def test_notes_cover_exactly_the_gates_present(self):
+        plan = self.plan(program(3, "h q[0];\nccx q[0],q[1],q[2];\nswap q[0],q[1];"))
+        self.assertEqual(set(plan["notes"]), {"h", "ccx", "swap"})
+
+    def test_layout_survives_the_whole_suite(self):
+        for label, source in suite().items():
+            with self.subTest(circuit=label):
+                plan = self.plan(source)
+                self.assertGreater(plan["columns"], 0)
+                for op in plan["ops"]:
+                    self.assertIn(op["kind"], {"box", "controlled", "swap", "measure"})
+
+
 class SchemaTest(unittest.TestCase):
     def test_result_passes_the_public_validator(self):
         import importlib.util
