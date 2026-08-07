@@ -12,7 +12,7 @@ OriginIR ``U1``). Lowering may introduce it; a profile that cannot emit it
 rewrites it to ``rz`` as the final step.
 
 Every rule below is verified numerically against the direct gate matrix (up to
-global phase) by ``tests/test_l1_decompositions.py``.
+global phase) by ``tests/test_l1_transpiler.py``.
 """
 
 import cmath
