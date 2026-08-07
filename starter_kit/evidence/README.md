@@ -43,15 +43,17 @@ evidence/files/spinq-screenshot.png
 请填写：
 
 ```text
-启动界面或 CLI 的命令：python3 starter_kit/tools/loomq_chat.py
-测试入口或页面地址：无（命令行交互，无需起服务）
+启动界面或 CLI 的命令：python3 starter_kit/tools/loomq_web.py（网页，自动开浏览器）
+                     python3 starter_kit/tools/loomq_chat.py（命令行，无桌面环境时用）
+测试入口或页面地址：http://127.0.0.1:8760/ —— 起服务后自动打开，无需联网、无需构建
 适合现场体验的 3 个用户任务：
-1. 输入「做一个 3 个量子比特的 GHZ 态，全部测量」，然后输入 /run —— 观察它先生成电路、
-   自己在无噪声模拟器上验证、再真跑在已安装的后端上，并把结果画成柱状图。
+1. 输入「做一个 3 个量子比特的 GHZ 态，全部测量」，然后点「运行」—— 它会先生成电路、
+   画出线路图、自己在无噪声模拟器上验证并给出预测分布，再真跑在已安装的后端上，
+   最后把预测和实测两组柱状图放在一起对比。
 2. 输入「我想要贝尔态，但这段跑不通，帮我修：H q[0]; CX q[0] q[1]」—— 观察它在保持
    用户声明意图的前提下修好代码，而不是换成一条无关电路。
-3. 输入「我要跑 15 个比特，还不想排队，用哪个后端？」—— 观察它给出规范后端标识和
-   选择理由。可以追加「那如果要真机而且不想花钱呢？」看它换一组答案。
+3. 输入「我要跑 15 个比特，还不想排队，用哪个后端？」—— 它会列出满足条件的后端卡片、
+   标出推荐项和规范标识。可以追加「那如果要真机而且不想花钱呢？」看它换一组答案。
 截图或演示视频：无
 ```
 
@@ -63,7 +65,8 @@ export LOOMQ_LLM_API_KEY=<key>
 export LOOMQ_LLM_MODEL=<model>
 ```
 
-一次性提问也可以：
+网页无需构建、无需联网加载任何外部资源，整页是一个自包含的 HTML 文件，服务端只用标准库。
+命令行一次性提问也可以：
 
 ```bash
 python3 starter_kit/tools/loomq_chat.py --prompt "做一个 3 比特 GHZ 态" --run
@@ -82,7 +85,8 @@ python3 starter_kit/tools/loomq_chat.py --prompt "做一个 3 比特 GHZ 态" --
   pip install -r starter_kit/requirements.txt
   python3 -m unittest discover -s tests          # 不需要任何 SDK
   python3 starter_kit/tools/selfcheck_l1.py      # 三个后端端到端对拍
-  python3 starter_kit/tools/loomq_chat.py        # L2 交互入口
+  python3 starter_kit/tools/loomq_web.py         # L2 网页入口
+  python3 starter_kit/tools/loomq_chat.py        # L2 命令行入口
 架构说明：starter_kit/L1_ARCHITECTURE.md（中间层）、starter_kit/L2_ARCHITECTURE.md（智能体）
 目标用户和使用场景：没有量子背景、但有明确问题意识的跨界创作者。用自然语言描述想做的
   实验，工具负责写电路、自己验证对错、选后端、真跑，并用大白话解释结果。
@@ -108,8 +112,8 @@ python3 starter_kit/tools/loomq_chat.py --prompt "做一个 3 比特 GHZ 态" --
 
 ```text
 零基础首次运行指南：[填写]
-量子概念解释：[填写]
-结果可视化：[填写]
+量子概念解释：starter_kit/loomq/diagram.py 的 GATE_NOTES，按电路实际用到的门自动展示
+结果可视化：网页界面的实时电路图 + 预测/实测双柱状图（starter_kit/tools/web/index.html）
 错误恢复或无障碍引导：[填写]
 ```
 
