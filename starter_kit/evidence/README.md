@@ -87,7 +87,8 @@ python3 starter_kit/tools/loomq_chat.py --prompt "做一个 3 比特 GHZ 态" --
   python3 starter_kit/tools/selfcheck_l1.py      # 三个后端端到端对拍
   python3 starter_kit/tools/loomq_web.py         # L2 网页入口
   python3 starter_kit/tools/loomq_chat.py        # L2 命令行入口
-架构说明：starter_kit/L1_ARCHITECTURE.md（中间层）、starter_kit/L2_ARCHITECTURE.md（智能体）
+架构说明：starter_kit/L1_ARCHITECTURE.md（中间层）、starter_kit/L2_ARCHITECTURE.md（智能体）、
+  starter_kit/L3_ARCHITECTURE.md（混合编译）
 目标用户和使用场景：没有量子背景、但有明确问题意识的跨界创作者。用自然语言描述想做的
   实验，工具负责写电路、自己验证对错、选后端、真跑，并用大白话解释结果。
 完整使用流程：L2_ARCHITECTURE.md 的「怎么跑」一节，含一次完整的
