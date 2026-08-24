@@ -246,8 +246,19 @@ Official backend capability data:
 
 def _remove_comments(source: str) -> str:
     """
-    Remove // comments from Hybrid-QASM.
+    Remove // and /* */ comments from Hybrid-QASM.
+
+    Block comments have to go before the brace matcher runs: a `{`, a `}` or
+    the word `classical` inside one would otherwise mis-slice the program,
+    and the comment text itself would land in the quantum operation list.
     """
+
+    source = re.sub(
+        r"/\*.*?\*/",
+        " ",
+        source,
+        flags=re.DOTALL,
+    )
 
     return re.sub(
         r"//.*?$",
