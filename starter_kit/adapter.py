@@ -377,41 +377,273 @@ def _emit_qasm2(circuit: Dict[str, Any]) -> str:
 
 
 # ============================================================
+# L1 : lowering and target emission
+# ============================================================
+
+# Rewrite rules from gate_identities.md. Each maps one gate to an equivalent
+# sequence of simpler gates, exact up to a global phase.
+def _decompose(name: str, qubits: Tuple[int, ...], params: Tuple[float, ...]) -> List[Tuple]:
+
+    def gate(gate_name, gate_qubits, *gate_params):
+        return ("gate", gate_name, tuple(gate_qubits), tuple(gate_params))
+
+    if name == "s":
+        return [gate("u1", qubits, math.pi / 2)]
+
+    if name == "sdg":
+        return [gate("u1", qubits, -math.pi / 2)]
+
+    if name == "t":
+        return [gate("u1", qubits, math.pi / 4)]
+
+    if name == "tdg":
+        return [gate("u1", qubits, -math.pi / 4)]
+
+    if name == "swap":
+        a, b = qubits
+        return [gate("cx", (a, b)), gate("cx", (b, a)), gate("cx", (a, b))]
+
+    if name == "cu1":
+        a, b = qubits
+        (theta,) = params
+        return [
+            gate("u1", (a,), theta / 2),
+            gate("cx", (a, b)),
+            gate("u1", (b,), -theta / 2),
+            gate("cx", (a, b)),
+            gate("u1", (b,), theta / 2),
+        ]
+
+    if name == "ccx":
+        a, b, c = qubits
+        return [
+            gate("h", (c,)),
+            gate("cx", (b, c)),
+            gate("tdg", (c,)),
+            gate("cx", (a, c)),
+            gate("t", (c,)),
+            gate("cx", (b, c)),
+            gate("tdg", (c,)),
+            gate("cx", (a, c)),
+            gate("t", (b,)),
+            gate("t", (c,)),
+            gate("h", (c,)),
+            gate("cx", (a, b)),
+            gate("t", (a,)),
+            gate("tdg", (b,)),
+            gate("cx", (a, b)),
+        ]
+
+    if name == "ry":
+        (theta,) = params
+        return [
+            gate("sdg", qubits),
+            gate("h", qubits),
+            gate("rz", qubits, theta),
+            gate("h", qubits),
+            gate("s", qubits),
+        ]
+
+    if name == "u1":
+        # rz(t) equals u1(t) up to a scalar. Lowering only reaches this rule
+        # once every controlled construction has already been expanded into
+        # cx plus single-qubit gates, so each substituted scalar factors out
+        # of the whole circuit as a global phase. Doing it earlier would get
+        # the relative phase wrong.
+        (theta,) = params
+        return [gate("rz", qubits, theta)]
+
+    raise ValueError(f"no decomposition rule for gate {name!r}")
+
+
+WHITELIST_12 = frozenset(
+    ["h", "x", "s", "sdg", "t", "tdg", "rz", "ry", "cx", "cu1", "swap", "ccx"]
+)
+
+# Every target has two profiles. `ir` is what transpile() returns and must
+# satisfy target_ir_contract.md, because the organisers parse and simulate
+# that string. `native` is what the locally installed SDK actually accepts,
+# which is narrower and was found by probing rather than by reading docs.
+TARGET_PROFILES = {
+    "spinq.ir": {
+        "syntax": "qasm2",
+        "supported": WHITELIST_12,
+        "names": {},
+    },
+    "spinq.native": {
+        "syntax": "qasm2",
+        "supported": WHITELIST_12,
+        "names": {},
+    },
+    "originq.ir": {
+        "syntax": "originir",
+        "supported": WHITELIST_12,
+        "names": {
+            "h": "H", "x": "X", "s": "S", "sdg": "SDAG", "t": "T", "tdg": "TDAG",
+            "rz": "RZ", "ry": "RY", "cx": "CNOT", "cu1": "CU1", "swap": "SWAP",
+            "ccx": "TOFFOLI",
+        },
+    },
+    # pyQPanda's own OriginIR reader rejects SDAG, TDAG, CU1 and CCX even
+    # though the contract allows them, so the runtime dialect drops sdg/tdg
+    # to U1 and spells the controlled phase CR.
+    "originq.native": {
+        "syntax": "originir",
+        "supported": frozenset(
+            ["h", "x", "s", "t", "rz", "ry", "u1", "cx", "cu1", "swap", "ccx"]
+        ),
+        "names": {
+            "h": "H", "x": "X", "s": "S", "t": "T", "rz": "RZ", "ry": "RY",
+            "u1": "U1", "cx": "CNOT", "cu1": "CR", "swap": "SWAP", "ccx": "TOFFOLI",
+        },
+    },
+    "braket.ir": {
+        "syntax": "qasm3",
+        "supported": WHITELIST_12,
+        "names": {"cu1": "cp"},
+        "include": 'include "stdgates.inc";',
+    },
+    # Braket's LocalSimulator resolves an include by opening a file that is
+    # not there, and has no sdg, tdg or cx.
+    "braket.native": {
+        "syntax": "qasm3",
+        "supported": frozenset(
+            ["h", "x", "s", "t", "rz", "ry", "u1", "cx", "cu1", "swap", "ccx"]
+        ),
+        "names": {
+            "u1": "phaseshift", "cx": "cnot", "cu1": "cphaseshift", "ccx": "ccnot",
+        },
+    },
+}
+
+
+def _profile(target: str, dialect: str) -> Dict[str, Any]:
+
+    if target not in SUPPORTED_TARGETS:
+        raise ValueError(f"unsupported target {target!r}")
+
+    return TARGET_PROFILES[f"{target}.{dialect}"]
+
+
+def _lower(circuit: Dict[str, Any], profile: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Rewrite the circuit until every gate is supported by the profile.
+    """
+
+    ops = list(circuit["ops"])
+
+    for _ in range(8):
+
+        if all(op[0] != "gate" or op[1] in profile["supported"] for op in ops):
+            return dict(circuit, ops=ops)
+
+        expanded: List[Tuple] = []
+
+        for op in ops:
+
+            if op[0] != "gate" or op[1] in profile["supported"]:
+                expanded.append(op)
+                continue
+
+            expanded.extend(_decompose(op[1], op[2], op[3]))
+
+        ops = expanded
+
+    raise ValueError("gate lowering did not converge")
+
+
+def _emit_qasm3(circuit: Dict[str, Any], profile: Dict[str, Any]) -> str:
+
+    lines = ["OPENQASM 3.0;"]
+
+    if profile.get("include"):
+        lines.append(profile["include"])
+
+    lines.append(f"qubit[{circuit['n_qubits']}] q;")
+
+    if circuit["n_clbits"]:
+        lines.append(f"bit[{circuit['n_clbits']}] c;")
+
+    for op in circuit["ops"]:
+
+        if op[0] == "measure":
+            lines.append(f"c[{op[2]}] = measure q[{op[1]}];")
+            continue
+
+        _, name, qubits, params = op
+        emitted = profile["names"].get(name, name)
+
+        rendered = (
+            f"({', '.join(_format_angle(value) for value in params)})" if params else ""
+        )
+
+        operands = ", ".join(f"q[{index}]" for index in qubits)
+
+        lines.append(f"{emitted}{rendered} {operands};")
+
+    return "\n".join(lines) + "\n"
+
+
+def _emit_originir(circuit: Dict[str, Any], profile: Dict[str, Any]) -> str:
+
+    lines = [f"QINIT {circuit['n_qubits']}"]
+
+    if circuit["n_clbits"]:
+        lines.append(f"CREG {circuit['n_clbits']}")
+
+    for op in circuit["ops"]:
+
+        if op[0] == "measure":
+            lines.append(f"MEASURE q[{op[1]}],c[{op[2]}]")
+            continue
+
+        _, name, qubits, params = op
+        emitted = profile["names"].get(name, name.upper())
+        operands = ",".join(f"q[{index}]" for index in qubits)
+
+        if params:
+            angles = ",".join(_format_angle(value) for value in params)
+            lines.append(f"{emitted} {operands},({angles})")
+        else:
+            lines.append(f"{emitted} {operands}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _compile_for(qasm_str: str, target: str, dialect: str) -> Tuple[Dict[str, Any], str]:
+    """
+    Parse, lower and render one circuit for one dialect of one target.
+    """
+
+    profile = _profile(target, dialect)
+    circuit = _lower(_parse_qasm2(qasm_str), profile)
+
+    syntax = profile["syntax"]
+
+    if syntax == "qasm2":
+        return circuit, _emit_qasm2(circuit)
+
+    if syntax == "qasm3":
+        return circuit, _emit_qasm3(circuit, profile)
+
+    return circuit, _emit_originir(circuit, profile)
+
+
+# ============================================================
 # L1
 # ============================================================
 
 def transpile(qasm_str: str, target: str) -> str:
     """
-    Convert OpenQASM 2.0 into a target representation.
+    Convert OpenQASM 2.0 into the target's contract IR.
+
+    SpinQ takes OpenQASM 2.0, Braket OpenQASM 3 and OriginQ a canonical
+    OriginIR subset, as set out in target_ir_contract.md.
     """
 
-    if target == "spinq":
-        return _emit_qasm2(_parse_qasm2(qasm_str))
+    _, native = _compile_for(qasm_str, target, "ir")
 
-    if target == "originq":
-        lines = []
-
-        for line in qasm_str.splitlines():
-            line = line.strip()
-
-            if line.startswith("h "):
-                q = line.split("[")[1].split("]")[0]
-                lines.append(f"H q[{q}]")
-
-            elif line.startswith("cx "):
-                q1 = line.split("[")[1].split("]")[0]
-                q2 = line.split(",")[1].split("[")[1].split("]")[0]
-                lines.append(f"CNOT q[{q1}], q[{q2}]")
-
-            elif line.startswith("measure"):
-                lines.append("MEASURE")
-
-        return "\n".join(lines)
-
-    if target == "braket":
-        return "// OpenQASM converted for Braket\n" + qasm_str
-
-    raise ValueError("Unsupported target")
+    return native
 
 
 def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
