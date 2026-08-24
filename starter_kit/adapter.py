@@ -460,11 +460,19 @@ class _ClassicalParser:
         if self._peek() == "else":
 
             self._pop("else")
-            self._pop("{")
 
-            else_branch = self.parse_program("}")
+            if self._peek() == "if":
 
-            self._pop("}")
+                # `else if` is a nested conditional, not a new block.
+                else_branch = [self.parse_if()]
+
+            else:
+
+                self._pop("{")
+
+                else_branch = self.parse_program("}")
+
+                self._pop("}")
 
         return (
             "if",
