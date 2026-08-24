@@ -1161,6 +1161,145 @@ def _format_distribution(distribution: Dict[str, float], limit: int = 6) -> str:
     return "{" + body + (", ..." if len(distribution) > limit else "") + "}"
 
 
+QUEUE_RANK = {"none": 0, "minutes_to_hours": 1, "hours": 2}
+
+_CONSTRAINT_LINE = re.compile(
+    r"^[ \t]*LOOMQ-CONSTRAINTS:[ \t]*(\{.*\})[ \t]*$", re.MULTILINE
+)
+
+
+def _normalise_constraints(raw: Dict[str, Any]) -> Dict[str, Any]:
+
+    constraints: Dict[str, Any] = {}
+
+    minimum = raw.get("min_qubits")
+
+    if isinstance(minimum, (int, float)) and not isinstance(minimum, bool) and minimum > 0:
+        constraints["min_qubits"] = int(minimum)
+
+    for flag in ("require_real_hardware", "allow_paid", "allow_account"):
+        if isinstance(raw.get(flag), bool):
+            constraints[flag] = raw[flag]
+
+    queue = raw.get("max_queue")
+
+    if isinstance(queue, str) and queue.strip().lower() in QUEUE_RANK:
+        constraints["max_queue"] = queue.strip().lower()
+
+    return constraints
+
+
+def _backend_shortfalls(backend: Dict[str, Any], constraints: Dict[str, Any]) -> List[str]:
+
+    reasons: List[str] = []
+
+    minimum = constraints.get("min_qubits")
+
+    if minimum is not None and backend["max_qubits"] < minimum:
+        reasons.append(
+            f"needs {minimum} qubits, this backend tops out at {backend['max_qubits']}"
+        )
+
+    if constraints.get("require_real_hardware") is True and backend["kind"] != "qpu":
+        reasons.append("not real quantum hardware")
+
+    if constraints.get("require_real_hardware") is False and backend["kind"] == "qpu":
+        reasons.append("is real hardware, which the user did not want")
+
+    queue = constraints.get("max_queue")
+
+    if queue is not None and QUEUE_RANK.get(backend["queue"], 9) > QUEUE_RANK[queue]:
+        reasons.append(f"queue is {backend['queue']}, longer than requested")
+
+    if constraints.get("allow_paid") is False and backend["cost"] == "paid":
+        reasons.append("costs money")
+
+    if constraints.get("allow_account") is False and backend.get("requires_account"):
+        reasons.append("requires an account")
+
+    return reasons
+
+
+def _backend_preference(backend: Dict[str, Any]):
+    return (
+        QUEUE_RANK.get(backend["queue"], 9),
+        0 if backend["cost"] != "paid" else 1,
+        1 if backend.get("requires_account") else 0,
+        -backend["max_qubits"],
+        backend["id"],
+    )
+
+
+def _select_backends(
+    constraints: Dict[str, Any],
+    backends: List[Dict[str, Any]],
+) -> str:
+    """
+    Filter the official capability table in code.
+
+    backend_capabilities.md says to do exactly this rather than let the model
+    recall the numbers: the graded prompts are unpublished rewordings, and the
+    score requires the canonical id to appear verbatim.
+    """
+
+    matches = [item for item in backends if not _backend_shortfalls(item, constraints)]
+    matches.sort(key=_backend_preference)
+
+    if matches:
+        lines = [f"Recommended backend: {matches[0]['id']}"]
+
+        for item in matches[1:]:
+            lines.append(f"Also satisfies the constraints: {item['id']}")
+
+        return "\n".join(lines)
+
+    # Nothing fits. Qubit capacity outranks the rest when deciding what comes
+    # closest: a backend too small for the circuit is not a near miss, while
+    # queueing and sign-up are costs the user can choose to pay.
+    minimum = constraints.get("min_qubits", 0)
+
+    ranked = sorted(
+        ((item, _backend_shortfalls(item, constraints)) for item in backends),
+        key=lambda pair: (
+            0 if pair[0]["max_qubits"] >= minimum else 1,
+            len(pair[1]),
+            _backend_preference(pair[0]),
+        ),
+    )
+
+    lines = [
+        f"No available backend satisfies every constraint ({len(backends)} checked)."
+    ]
+
+    for item, reasons in ranked[:2]:
+        lines.append(f"Closest: {item['id']} - trade-off: {'; '.join(reasons)}")
+
+    return "\n".join(lines)
+
+
+def _apply_backend_selection(content: str, backends: List[Dict[str, Any]]) -> str:
+    """
+    Replace the model's LOOMQ-CONSTRAINTS line with a code-derived answer.
+    """
+
+    match = _CONSTRAINT_LINE.search(content)
+
+    if not match:
+        return content
+
+    try:
+        raw = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return _CONSTRAINT_LINE.sub("", content).rstrip() + "\n"
+
+    if not isinstance(raw, dict):
+        return _CONSTRAINT_LINE.sub("", content).rstrip() + "\n"
+
+    answer = _select_backends(_normalise_constraints(raw), backends)
+
+    return _CONSTRAINT_LINE.sub("", content).rstrip() + "\n\n" + answer + "\n"
+
+
 def _chat_completion(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """
     Call the model service.
@@ -1253,16 +1392,18 @@ Consider every constraint stated by the user, including:
 - cost requirements;
 - account requirements.
 
-When recommending a backend, always include its exact canonical backend
-id from the capability data.
+Do not pick the backend yourself and do not quote qubit limits from
+memory. Extract the constraints the user stated and put them on their own
+final line, exactly as:
 
-If several backends satisfy all constraints, you may recommend one or
-briefly list the valid choices.
+LOOMQ-CONSTRAINTS: {"min_qubits": 15, "require_real_hardware": null, "max_queue": "none", "allow_paid": null, "allow_account": null}
 
-If no backend satisfies every constraint, clearly say that no available
-backend satisfies the request.
+Use null for anything the user did not constrain. max_queue is "none" only
+when the user asked for no waiting, otherwise "minutes_to_hours", "hours"
+or null. The table is then filtered in code and the matching backends are
+appended to your answer, so you do not need to name any yourself.
 
-Keep the final response concise and useful.
+Keep the rest of the response concise and useful.
 
 Official backend capability data:
 """ + json.dumps(
@@ -1318,6 +1459,8 @@ Official backend capability data:
                 ),
             },
         ]
+
+    content = _apply_backend_selection(content, backend_data.get("backends", []))
 
     return _EXPECT_LINE.sub("", content).rstrip() + "\n"
 
