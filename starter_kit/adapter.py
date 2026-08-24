@@ -2147,6 +2147,29 @@ def _compile_statements(
 # L3
 # ============================================================
 
+def _validate_quantum_statement(statement: str) -> None:
+    """
+    Reject a quantum statement that is not a whitelist gate.
+
+    The returned operation list is checked for semantic equivalence against
+    the original circuit, so passing an unrecognised statement through
+    unchanged fails that check with no explanation. Failing here names the
+    offending statement instead.
+    """
+
+    match = re.match(r"([A-Za-z_]\w*)", statement)
+
+    if not match:
+        raise ValueError(f"cannot parse quantum statement {statement!r}")
+
+    name = GATE_ALIASES.get(match.group(1).lower(), match.group(1).lower())
+
+    if name not in GATE_SIGNATURES:
+        raise ValueError(
+            f"gate {match.group(1)!r} is outside the qelib1 whitelist"
+        )
+
+
 def compile_hybrid(
     hybrid_qasm_str: str
 ) -> Tuple[List[str], str]:
@@ -2199,6 +2222,13 @@ def compile_hybrid(
 
         if lower.startswith("creg"):
             continue
+
+        if lower.startswith(("barrier", "reset")):
+            # The contract asks for gate and measurement instructions only.
+            continue
+
+        if not lower.startswith("measure"):
+            _validate_quantum_statement(line)
 
         quantum_operations.append(
             line + ";"
