@@ -1,0 +1,1018 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoomQ — 用大白话指挥量子计算机</title>
+<style>
+/* ---------------------------------------------------------------------------
+   LoomQ.
+
+   A loom is warp threads crossed by weft. A quantum circuit is qubit wires
+   crossed by gates. The page is built on that: faint vertical warp running the
+   full height, and the circuit diagram's horizontal wires weaving across it.
+
+   Palette is indigo dyeing. Indigo ink for the machine, madder root red for
+   measurement outcomes, brass for the one badge that says "checked", undyed
+   linen for the ground. Two accents, each with exactly one job.
+--------------------------------------------------------------------------- */
+
+:root {
+  --paper:      #E9EAE4;
+  --panel:      #F3F3EF;
+  --panel-sunk: #E1E2DB;
+  --ink:        #16203C;
+  --ink-soft:   #5C6684;
+  --ink-faint:  #616983;   /* 4.5:1 on --paper; eyebrows are 11.5px */
+  --indigo:     #2C3D7B;
+  --madder:     #B4432A;
+  --brass:      #8A7130;
+  --rule:       rgba(22, 32, 60, .16);
+  --thread:     rgba(22, 32, 60, .055);
+  --action-bg:  #2C3D7B;
+  --action-fg:  #F1F1EC;
+
+  --display: "Iowan Old Style", Charter, "Palatino Linotype", Palatino, Georgia,
+             "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", serif;
+  --body: Optima, "Avenir Next", "Segoe UI", system-ui, -apple-system,
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+          "Noto Sans CJK SC", sans-serif;
+  --mono: "SF Mono", Menlo, "DejaVu Sans Mono", Consolas, monospace;
+
+  --row: 44px;
+  --gutter: clamp(20px, 5vw, 56px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper:      #131829;
+    --panel:      #1A2036;
+    --panel-sunk: #10152552;
+    --ink:        #E4E5DE;
+    --ink-soft:   #A2A9C0;
+    --ink-faint:  #6B7392;
+    --indigo:     #93A6E8;
+    --madder:     #E0805F;
+    --brass:      #C9A94F;
+    --rule:       rgba(228, 229, 222, .18);
+    --thread:     rgba(228, 229, 222, .05);
+    --action-bg:  #35468C;
+    --action-fg:  #EDEEF6;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The warp: vertical threads the whole page is woven onto. */
+.warp {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: repeating-linear-gradient(
+    to right, var(--thread) 0 1px, transparent 1px 44px);
+}
+
+.shell {
+  position: relative;
+  z-index: 1;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 96px;
+}
+
+/* --- masthead ------------------------------------------------------------ */
+
+.masthead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 34px 0 26px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wordmark {
+  font-family: var(--display);
+  font-size: 25px;
+  letter-spacing: .01em;
+}
+.wordmark b { font-weight: 600; }
+.wordmark i { color: var(--madder); font-style: normal; }
+
+.env {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.env .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ink-faint);
+}
+.env.live .dot { background: var(--brass); }
+
+/* --- the ask ------------------------------------------------------------- */
+
+.ask { padding: 60px 0 8px; }
+
+.ask h1 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(30px, 5.4vw, 47px);
+  line-height: 1.18;
+  letter-spacing: -.012em;
+  margin: 0 0 14px;
+  max-width: 13.5em;
+}
+.ask h1 em {
+  font-style: normal;
+  color: var(--ink-soft);
+  display: block;
+}
+
+.ask .sub {
+  margin: 0 0 30px;
+  color: var(--ink-soft);
+  font-size: 16.5px;
+  max-width: 30em;
+}
+
+.composer {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--indigo);
+  background: var(--panel);
+  padding: 4px 4px 4px 0;
+}
+.composer:focus-within { border-color: var(--indigo); }
+
+.composer textarea {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16.5px;
+  line-height: 1.5;
+  padding: 14px 16px;
+  resize: none;
+  min-height: 58px;
+  outline: none;
+}
+.composer textarea::placeholder { color: var(--ink-faint); }
+
+.send {
+  flex: 0 0 auto;
+  align-self: stretch;
+  border: 0;
+  background: var(--action-bg);
+  color: var(--action-fg);
+  font-family: var(--body);
+  font-size: 15px;
+  letter-spacing: .04em;
+  padding: 0 22px;
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.send:hover:not(:disabled) { filter: brightness(1.15); }
+.send:disabled { opacity: .45; cursor: default; }
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.chip {
+  border: 1px solid var(--rule);
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 7px 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .15s ease, color .15s ease;
+}
+.chip:hover { border-color: var(--indigo); color: var(--ink); }
+.chip span { color: var(--ink-faint); font-size: 12.5px; }
+.chip span::before { content: " · "; }
+
+:focus-visible {
+  outline: 2px solid var(--madder);
+  outline-offset: 2px;
+}
+
+/* --- stages -------------------------------------------------------------- */
+
+.stage {
+  padding-top: 46px;
+  animation: rise .4s ease both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(9px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 14px;
+}
+.eyebrow::before {
+  content: "";
+  width: 1px;
+  height: 11px;
+  background: var(--madder);
+  transform: translateY(1px);
+}
+.eyebrow .spacer { flex: 1; }
+
+.badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .02em;
+  text-transform: none;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  color: var(--brass);
+}
+.badge.warn { color: var(--madder); }
+
+.said {
+  font-family: var(--display);
+  font-size: clamp(20px, 3vw, 26px);
+  line-height: 1.4;
+  margin: 0;
+  max-width: 24em;
+}
+
+/* --- the loom: circuit diagram ------------------------------------------- */
+
+.loom {
+  background: var(--panel);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 22px 0 18px;
+  overflow-x: auto;
+}
+.loom svg { display: block; min-width: 100%; }
+
+.wire      { stroke: var(--ink); stroke-width: 1.1; opacity: .45; }
+.crail     { stroke: var(--ink-soft); stroke-width: 1; opacity: .35; }
+.qlabel    { fill: var(--ink-soft); font-family: var(--mono); font-size: 11px; }
+.link      { stroke: var(--indigo); stroke-width: 1.6; }
+.dot       { fill: var(--indigo); }
+.ring      { fill: var(--panel); stroke: var(--indigo); stroke-width: 1.6; }
+.gatebox   { fill: var(--panel); stroke: var(--indigo); stroke-width: 1.4; }
+.gatetext  { fill: var(--indigo); font-family: var(--mono); font-size: 12.5px;
+             font-weight: 600; text-anchor: middle; dominant-baseline: central; }
+.angletext { fill: var(--ink-soft); font-family: var(--mono); font-size: 9.5px;
+             text-anchor: middle; }
+.mbox      { fill: var(--panel); stroke: var(--madder); stroke-width: 1.4; }
+.marc      { fill: none; stroke: var(--madder); stroke-width: 1.2; }
+.mneedle   { stroke: var(--madder); stroke-width: 1.2; }
+.mdrop     { stroke: var(--madder); stroke-width: 1; stroke-dasharray: 2 3; opacity: .8; }
+
+.op { animation: weave .34s ease both; }
+@keyframes weave {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.glossary {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+.glossary li {
+  font-size: 14px;
+  color: var(--ink-soft);
+  padding-left: 14px;
+  border-left: 1px solid var(--rule);
+  line-height: 1.55;
+}
+
+.code {
+  margin-top: 18px;
+  border: 1px solid var(--rule);
+}
+.code summary {
+  cursor: pointer;
+  padding: 9px 14px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  user-select: none;
+}
+.code summary::marker { color: var(--ink-faint); }
+.code pre {
+  margin: 0;
+  padding: 0 14px 14px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink);
+  overflow-x: auto;
+}
+
+/* --- distributions ------------------------------------------------------- */
+
+.bars { display: grid; gap: 6px; margin: 4px 0 0; }
+
+.bar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+.bar .state {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  letter-spacing: .1em;
+  color: var(--ink);
+}
+.bar .track { height: 20px; background: var(--panel-sunk); }
+.bar .fill {
+  height: 100%;
+  width: 0;
+  transition: width .5s cubic-bezier(.2, .7, .3, 1);
+}
+.bar .pct {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  min-width: 8ch;
+  text-align: right;
+}
+
+/* Predicted is hatched — it has not happened yet. Measured is solid. */
+.bars.predicted .fill {
+  background-image: repeating-linear-gradient(
+    -45deg, var(--indigo) 0 3px, transparent 3px 6px);
+  border-bottom: 2px solid var(--indigo);
+}
+.bars.measured .fill { background: var(--madder); }
+
+.caption {
+  margin: 14px 0 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+  max-width: 36em;
+}
+.caption code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--panel-sunk);
+  padding: 1px 5px;
+}
+
+/* --- run controls -------------------------------------------------------- */
+
+.runbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.runbar select,
+.runbar input {
+  font: inherit;
+  font-size: 14px;
+  padding: 9px 11px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+}
+.runbar input { width: 8ch; font-family: var(--mono); }
+.runbar .hint { font-size: 13px; color: var(--ink-faint); }
+
+.run {
+  border: 0;
+  background: var(--madder);
+  color: #F6F2EC;
+  font: inherit;
+  font-size: 14.5px;
+  letter-spacing: .03em;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: filter .15s ease;
+}
+.run:hover:not(:disabled) { filter: brightness(.9); }
+.run:disabled { opacity: .45; cursor: default; }
+
+.jobline {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  word-break: break-all;
+}
+
+/* --- backend cards ------------------------------------------------------- */
+
+.cards { display: grid; gap: 10px; }
+
+.card {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--ink-faint);
+  background: var(--panel);
+  padding: 15px 18px;
+}
+.card.pick { border-left-color: var(--madder); }
+
+.card .id {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--ink);
+  word-break: break-all;
+}
+.card .who { font-size: 14px; color: var(--ink-soft); margin-top: 3px; }
+.card .specs {
+  margin-top: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.card .specs span {
+  border: 1px solid var(--rule);
+  padding: 2px 8px;
+}
+.card .cost { color: var(--madder); }
+.card .why { margin-top: 9px; font-size: 13.5px; color: var(--madder); }
+
+/* --- notices ------------------------------------------------------------- */
+
+.notice {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--madder);
+  background: var(--panel);
+  padding: 16px 18px;
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.notice h3 {
+  margin: 0 0 8px;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 18px;
+}
+.notice pre {
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  background: var(--panel-sunk);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-soft);
+  font-size: 15px;
+  padding-top: 46px;
+}
+.shuttle {
+  width: 74px;
+  height: 3px;
+  background: var(--panel-sunk);
+  position: relative;
+  overflow: hidden;
+}
+/* The shuttle crossing the warp, back and forth. */
+.shuttle::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 22px;
+  background: var(--indigo);
+  animation: shuttle 1.1s ease-in-out infinite alternate;
+}
+@keyframes shuttle { to { transform: translateX(52px); } }
+
+.prose {
+  white-space: pre-wrap;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+footer {
+  margin-top: 72px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--ink-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+@media (max-width: 640px) {
+  .composer { flex-direction: column; padding: 4px; border-left-width: 3px; }
+  .send { padding: 13px 0; }
+  .bar { grid-template-columns: auto 1fr; }
+  .bar .pct { grid-column: 2; text-align: left; min-width: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="warp" aria-hidden="true"></div>
+
+<div class="shell">
+  <header class="masthead">
+    <div class="wordmark"><b>Loom</b><i>Q</i></div>
+    <div class="env" id="env"><span class="dot"></span><span id="env-text">正在连接…</span></div>
+  </header>
+
+  <section class="ask">
+    <h1>用大白话描述一个量子实验。<em>剩下的交给我。</em></h1>
+    <p class="sub">不需要懂物理，也不需要会写量子代码。说清楚你想要什么，我来写电路、自己检查对不对，再帮你跑在真实后端上。</p>
+
+    <form class="composer" id="ask-form">
+      <textarea id="prompt" rows="2" aria-label="你想做什么"
+        placeholder="比如：做一个 3 个量子比特的 GHZ 态，全部测量"></textarea>
+      <button class="send" type="submit" id="send">问 LoomQ</button>
+    </form>
+
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <div id="stages"></div>
+
+  <footer>
+    <span>电路由智能体生成，并在无噪声模拟器上自动核对过</span>
+    <span>运行经 LoomQ 统一中间层，同一份电路可发往三个平台</span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+const COL = 58;          // one time step
+const ROW = 44;          // one qubit wire — same rhythm as the histogram rows
+const PAD_L = 44;        // room for the q0/q1 labels
+const PAD_T = 26;
+
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+
+const svgEl = (tag, attrs) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  return node;
+};
+
+const stages = document.getElementById("stages");
+const form = document.getElementById("ask-form");
+const promptBox = document.getElementById("prompt");
+const sendButton = document.getElementById("send");
+
+let backends = [];
+let configured = false;
+
+/* --- boot ---------------------------------------------------------------- */
+
+fetch("/api/state").then(r => r.json()).then(state => {
+  backends = state.backends || [];
+  configured = !!state.configured;
+
+  const env = document.getElementById("env");
+  const text = document.getElementById("env-text");
+  if (configured) {
+    env.classList.add("live");
+    text.textContent = state.model;
+  } else {
+    text.textContent = "模型服务未配置";
+  }
+
+  const chips = document.getElementById("chips");
+  (state.examples || []).forEach(example => {
+    const chip = el("button", "chip");
+    chip.type = "button";
+    chip.append(example.label, el("span", null, example.note));
+    chip.addEventListener("click", () => {
+      promptBox.value = example.prompt;
+      promptBox.focus();
+      form.requestSubmit();
+    });
+    chips.append(chip);
+  });
+
+  if (!configured) showConfigNotice(state.config_error || "");
+}).catch(() => {
+  document.getElementById("env-text").textContent = "本地服务连不上";
+});
+
+function showConfigNotice(detail) {
+  const notice = el("div", "notice");
+  notice.append(el("h3", null, "先把模型服务接上"));
+  notice.append(el("div", null,
+    "LoomQ 不在代码里写死任何服务地址或密钥。把下面三行填好、贴进终端，重启这个页面的服务即可。"
+      + (detail ? "（" + detail + "）" : "")));
+  notice.append(el("pre", null,
+    "export LOOMQ_LLM_BASE_URL=<你的服务地址>\n"
+    + "export LOOMQ_LLM_API_KEY=<你的密钥>\n"
+    + "export LOOMQ_LLM_MODEL=<模型名>\n"
+    + "python3 starter_kit/tools/loomq_web.py"));
+  const stage = el("div", "stage");
+  stage.append(notice);
+  stages.append(stage);
+}
+
+/* --- ask ----------------------------------------------------------------- */
+
+form.addEventListener("submit", event => {
+  event.preventDefault();
+  const prompt = promptBox.value.trim();
+  if (!prompt) return;
+  ask(prompt);
+});
+
+promptBox.addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+async function ask(prompt) {
+  stages.replaceChildren();
+  sendButton.disabled = true;
+
+  const waiting = el("div", "thinking");
+  waiting.append(el("span", "shuttle"), el("span", null, "正在读懂你的意思，然后写电路、自己核对…"));
+  stages.append(waiting);
+
+  let data;
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt })
+    });
+    data = await response.json();
+  } catch (error) {
+    data = { ok: false, error: "本地服务没有响应，确认终端里的 loomq_web.py 还在运行。" };
+  }
+
+  sendButton.disabled = false;
+  stages.replaceChildren();
+
+  if (!data.ok) {
+    if (data.needs_config) showConfigNotice("");
+    else stages.append(stage(null, el("div", "notice", data.error)));
+    return;
+  }
+
+  renderUnderstood(data);
+  if (data.diagram) renderCircuit(data);
+  if (data.predicted) renderPredicted(data);
+  if (data.selection) renderSelection(data);
+  if (!data.diagram && !data.selection) {
+    stages.append(stage("回答", Object.assign(el("p", "prose"), { textContent: data.text })));
+  }
+  if (data.qasm) renderRunner(data);
+}
+
+/* --- stages -------------------------------------------------------------- */
+
+function stage(label, ...children) {
+  const section = el("section", "stage");
+  if (label) {
+    const eyebrow = el("div", "eyebrow");
+    eyebrow.append(el("span", null, label));
+    section.append(eyebrow);
+  }
+  section.append(...children);
+  return section;
+}
+
+function eyebrowWithBadge(label, badgeText, warn) {
+  const eyebrow = el("div", "eyebrow");
+  eyebrow.append(el("span", null, label), el("span", "spacer"));
+  if (badgeText) {
+    const badge = el("span", "badge" + (warn ? " warn" : ""), badgeText);
+    eyebrow.append(badge);
+  }
+  return eyebrow;
+}
+
+function renderUnderstood(data) {
+  const said = el("p", "said", data.goal || data.text.split("\n")[0]);
+  const meta = el("p", "caption",
+    "用了 " + data.model_calls + " 次模型调用，"
+    + (data.attempts > 1 ? "第 " + data.attempts + " 稿通过自检，" : "")
+    + "耗时 " + data.elapsed + " 秒。");
+  stages.append(stage("我听懂的是", said, meta));
+}
+
+function renderCircuit(data) {
+  const section = el("section", "stage");
+  const verified = data.verified;
+  section.append(eyebrowWithBadge(
+    "织出来的电路",
+    verified ? "已自检通过" : "未通过自检",
+    !verified));
+
+  const loom = el("div", "loom");
+  loom.append(drawCircuit(data.diagram));
+  section.append(loom);
+
+  const notes = Object.values(data.diagram.notes || {});
+  if (notes.length) {
+    const list = el("ul", "glossary");
+    notes.forEach(note => list.append(el("li", null, note)));
+    section.append(list);
+  }
+
+  const details = el("details", "code");
+  details.append(el("summary", null, "看代码（OpenQASM 2.0）"), el("pre", null, data.qasm));
+  section.append(details);
+
+  stages.append(section);
+}
+
+function drawCircuit(plan) {
+  const width = PAD_L + (plan.columns + 1) * COL;
+  const height = PAD_T * 2 + plan.n_qubits * ROW + (plan.n_clbits ? 22 : 0);
+  const svg = svgEl("svg", {
+    viewBox: "0 0 " + width + " " + height,
+    width: width, height: height, role: "img",
+    "aria-label": "量子电路图，共 " + plan.n_qubits + " 个量子比特"
+  });
+
+  const y = q => PAD_T + q * ROW + ROW / 2;
+  const x = c => PAD_L + c * COL + COL / 2;
+  const railY = PAD_T + plan.n_qubits * ROW + 10;
+
+  // Weft: the qubit wires, crossing the page's warp.
+  for (let q = 0; q < plan.n_qubits; q++) {
+    svg.append(svgEl("line", { class: "wire", x1: PAD_L - 8, y1: y(q), x2: width - 8, y2: y(q) }));
+    const label = svgEl("text", { class: "qlabel", x: 6, y: y(q) + 4 });
+    label.textContent = "q" + q;
+    svg.append(label);
+  }
+
+  if (plan.n_clbits) {
+    [0, 3].forEach(offset => svg.append(svgEl("line", {
+      class: "crail", x1: PAD_L - 8, y1: railY + offset, x2: width - 8, y2: railY + offset
+    })));
+    const label = svgEl("text", { class: "qlabel", x: 6, y: railY + 7 });
+    label.textContent = "c";
+    svg.append(label);
+  }
+
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  plan.ops.forEach(op => {
+    const group = svgEl("g", { class: "op" });
+    if (!reduced) group.style.animationDelay = (0.05 + op.column * 0.045) + "s";
+    const cx = x(op.column);
+
+    if (op.kind === "box") {
+      const w = op.angle ? 42 : 30;
+      group.append(svgEl("rect", {
+        class: "gatebox", x: cx - w / 2, y: y(op.qubit) - 14, width: w, height: 28, rx: 2
+      }));
+      const text = svgEl("text", { class: "gatetext", x: cx, y: y(op.qubit) + (op.angle ? -2 : 0) });
+      text.textContent = op.label;
+      group.append(text);
+      if (op.angle) {
+        const angle = svgEl("text", { class: "angletext", x: cx, y: y(op.qubit) + 10 });
+        angle.textContent = op.angle;
+        group.append(angle);
+      }
+    } else if (op.kind === "controlled") {
+      const rows = op.controls.concat([op.target]);
+      const top = Math.min(...rows), bottom = Math.max(...rows);
+      group.append(svgEl("line", { class: "link", x1: cx, y1: y(top), x2: cx, y2: y(bottom) }));
+      op.controls.forEach(q =>
+        group.append(svgEl("circle", { class: "dot", cx: cx, cy: y(q), r: 4.5 })));
+
+      if (op.symbol === "xor") {
+        group.append(svgEl("circle", { class: "ring", cx: cx, cy: y(op.target), r: 9.5 }));
+        group.append(svgEl("line", { class: "link", x1: cx - 9.5, y1: y(op.target), x2: cx + 9.5, y2: y(op.target) }));
+        group.append(svgEl("line", { class: "link", x1: cx, y1: y(op.target) - 9.5, x2: cx, y2: y(op.target) + 9.5 }));
+      } else {
+        group.append(svgEl("circle", { class: "dot", cx: cx, cy: y(op.target), r: 4.5 }));
+      }
+      if (op.angle) {
+        const angle = svgEl("text", { class: "angletext", x: cx + 16, y: (y(top) + y(bottom)) / 2 });
+        angle.textContent = op.angle;
+        group.append(angle);
+      }
+    } else if (op.kind === "swap") {
+      const [a, b] = op.qubits;
+      group.append(svgEl("line", { class: "link", x1: cx, y1: y(a), x2: cx, y2: y(b) }));
+      [a, b].forEach(q => {
+        group.append(svgEl("line", { class: "link", x1: cx - 6, y1: y(q) - 6, x2: cx + 6, y2: y(q) + 6 }));
+        group.append(svgEl("line", { class: "link", x1: cx - 6, y1: y(q) + 6, x2: cx + 6, y2: y(q) - 6 }));
+      });
+    } else if (op.kind === "measure") {
+      const qy = y(op.qubit);
+      group.append(svgEl("rect", { class: "mbox", x: cx - 14, y: qy - 12, width: 28, height: 24, rx: 2 }));
+      group.append(svgEl("path", { class: "marc", d: "M " + (cx - 8) + " " + (qy + 5) + " a 8 8 0 0 1 16 0" }));
+      group.append(svgEl("line", { class: "mneedle", x1: cx, y1: qy + 5, x2: cx + 6, y2: qy - 4 }));
+      group.append(svgEl("line", { class: "mdrop", x1: cx, y1: qy + 12, x2: cx, y2: railY }));
+    }
+
+    svg.append(group);
+  });
+
+  return svg;
+}
+
+function renderPredicted(data) {
+  const section = el("section", "stage");
+  section.append(eyebrowWithBadge("会得到什么", null, false));
+  section.append(bars(data.predicted, 1, "predicted"));
+  section.append(el("p", "caption",
+    "这是理论上的结果，由本地精确模拟算出来的——还没有真的跑。"
+    + "读的时候注意，最右边那一位是 c[0]。"));
+  stages.append(section);
+}
+
+function renderSelection(data) {
+  const section = el("section", "stage");
+  const matches = data.selection.matches;
+  section.append(eyebrowWithBadge(matches.length ? "满足条件的后端" : "没有完全满足的后端", null, false));
+
+  const cards = el("div", "cards");
+  if (matches.length) {
+    matches.forEach((backend, index) => cards.append(backendCard(backend, index === 0)));
+  } else {
+    section.append(el("p", "caption", "把条件放宽一点的话，最接近的是这些："));
+    data.selection.relaxed.forEach(backend => {
+      const card = backendCard(backend, false);
+      card.append(el("div", "why", "代价：" + backend.reasons.join("；")));
+      cards.append(card);
+    });
+  }
+  section.append(cards);
+  stages.append(section);
+}
+
+function backendCard(backend, isPick) {
+  const card = el("div", "card" + (isPick ? " pick" : ""));
+  card.append(el("div", "id", backend.id));
+  card.append(el("div", "who", backend.name));
+
+  const specs = el("div", "specs");
+  specs.append(el("span", null, "最多 " + backend.max_qubits + " 比特"));
+  specs.append(el("span", null, {
+    none: "不用排队", minutes_to_hours: "排队分钟～小时", hours: "排队小时级"
+  }[backend.queue] || backend.queue));
+  const cost = el("span", backend.cost === "paid" ? "cost" : null,
+    backend.cost === "paid" ? "按量收费" : (backend.cost === "free" ? "免费" : "有免费额度"));
+  specs.append(cost);
+  specs.append(el("span", null, backend.requires_account ? "需要注册" : "不用注册"));
+  specs.append(el("span", null, backend.kind === "qpu" ? "真机" : (backend.kind === "cloud" ? "云端" : "模拟器")));
+  card.append(specs);
+  return card;
+}
+
+function bars(distribution, total, variant) {
+  const wrap = el("div", "bars " + variant);
+  const rows = Object.entries(distribution).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const top = rows.length ? rows[0][1] : 1;
+
+  rows.slice(0, 12).forEach(([state, value]) => {
+    const share = value / total;
+    const row = el("div", "bar");
+    row.append(el("span", "state", state));
+    const track = el("span", "track");
+    const fill = el("span", "fill");
+    track.append(fill);
+    row.append(track);
+    row.append(el("span", "pct",
+      variant === "measured"
+        ? value + " · " + (share * 100).toFixed(1) + "%"
+        : (share * 100).toFixed(1) + "%"));
+    wrap.append(row);
+    requestAnimationFrame(() => { fill.style.width = (100 * value / top) + "%"; });
+  });
+  return wrap;
+}
+
+/* --- run it for real ----------------------------------------------------- */
+
+function renderRunner(data) {
+  const section = el("section", "stage");
+  section.append(eyebrowWithBadge("真跑一次", null, false));
+
+  const bar = el("div", "runbar");
+  const picker = el("select");
+  picker.setAttribute("aria-label", "选择后端");
+  backends.forEach(backend => {
+    const option = el("option", null,
+      backend.id + (backend.available ? "" : "（未安装 " + backend.package + "）"));
+    option.value = backend.target;
+    option.disabled = !backend.available;
+    picker.append(option);
+  });
+  const firstReady = backends.find(b => b.available);
+  if (firstReady) picker.value = firstReady.target;
+
+  const shots = el("input");
+  shots.type = "number";
+  shots.value = "1024";
+  shots.min = "1";
+  shots.max = "100000";
+  shots.setAttribute("aria-label", "运行次数");
+
+  const button = el("button", "run", "运行");
+  button.type = "button";
+
+  bar.append(picker, shots, el("span", "hint", "次"), button);
+  section.append(bar);
+
+  if (!firstReady) {
+    section.append(el("p", "caption",
+      "还没有装上任何后端 SDK。先跑 pip install -r starter_kit/requirements.txt，再回来点运行。"));
+    button.disabled = true;
+  }
+
+  const output = el("div");
+  section.append(output);
+  stages.append(section);
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "运行中…";
+    output.replaceChildren();
+
+    let result;
+    try {
+      const response = await fetch("/api/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          qasm: data.qasm, target: picker.value, shots: Number(shots.value)
+        })
+      });
+      result = await response.json();
+    } catch (error) {
+      result = { ok: false, error: "本地服务没有响应。" };
+    }
+
+    button.disabled = false;
+    button.textContent = "再跑一次";
+
+    if (!result.ok) {
+      output.append(el("p", "caption", result.error));
+      return;
+    }
+
+    const payload = result.result;
+    output.append(bars(payload.counts, payload.shots, "measured"));
+    output.append(el("p", "caption",
+      "在 " + payload.backend + " 上采样 " + payload.shots
+      + " 次的真实结果。和上面的预测对一下——次数越多，两者越接近。"));
+    output.append(el("div", "jobline", "job_id " + payload.job_id
+      + " · 门数 " + (payload.meta.transpiled_gates ?? "?")
+      + " · 深度 " + (payload.meta.depth ?? "?")));
+  });
+}
+</script>
+</body>
+</html>
