@@ -1302,13 +1302,20 @@ def _apply_backend_selection(content: str, backends: List[Dict[str, Any]]) -> st
     return _CONSTRAINT_LINE.sub("", content).rstrip() + "\n\n" + answer + "\n"
 
 
-def _chat_completion(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+def _chat_completion(
+    messages: List[Dict[str, str]],
+    deadline: Optional[float] = None,
+) -> Dict[str, Any]:
     """
     Call the model service.
 
     The transport is imported here rather than at module scope so that a
     missing or broken llm_client only breaks L2. Importing it at the top
     makes `import adapter` fail outright, taking L1 and L3 down with it.
+
+    When a deadline is given the request timeout is shrunk to fit inside it.
+    Three retries at the default 120 second timeout would otherwise run the
+    case well past its own limit.
     """
 
     try:
@@ -1316,7 +1323,22 @@ def _chat_completion(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     except ImportError:
         from llm_client import chat_completion
 
-    return chat_completion(messages)
+    if deadline is None:
+        return chat_completion(messages)
+
+    remaining = max(1.0, deadline - time.monotonic())
+    configured = float(os.environ.get("LOOMQ_LLM_TIMEOUT_SECONDS", "120"))
+    previous = os.environ.get("LOOMQ_LLM_TIMEOUT_SECONDS")
+
+    os.environ["LOOMQ_LLM_TIMEOUT_SECONDS"] = repr(min(configured, remaining))
+
+    try:
+        return chat_completion(messages)
+    finally:
+        if previous is None:
+            os.environ.pop("LOOMQ_LLM_TIMEOUT_SECONDS", None)
+        else:
+            os.environ["LOOMQ_LLM_TIMEOUT_SECONDS"] = previous
 
 
 def agent_chat(prompt: str) -> str:
@@ -1428,24 +1450,49 @@ Official backend capability data:
     deadline = time.monotonic() + CASE_BUDGET_SECONDS
 
     content = ""
+    asked_for_structure = False
 
     for attempt in range(MAX_ATTEMPTS):
 
-        content = _model_reply(messages)
+        content = _model_reply(messages, deadline)
 
         qasm, problem = _check_circuit(content)
 
-        if qasm is None or not problem:
-            # Either this is not a circuit task at all, or the circuit
-            # checked out. Nothing to retry.
+        if qasm is not None and problem:
+            # Retry with the actual discrepancy. "Wrong" teaches the model
+            # nothing; the observed and intended distributions usually get
+            # it fixed on the first retry.
+            follow_up = (
+                f"That is not correct yet: {problem}. "
+                "Remember that the rightmost character of an outcome is "
+                "classical bit c[0]. Send the corrected program, and a "
+                "matching LOOMQ-EXPECT line."
+            )
+
+        elif (
+            qasm is None
+            and not asked_for_structure
+            and not _CONSTRAINT_LINE.search(content)
+        ):
+            # No program and no constraints line. A backend question answered
+            # in prose scores nothing, because the canonical id is only added
+            # from the constraints line and the prompt tells the model not to
+            # name backends itself. Ask once rather than lose the case.
+            asked_for_structure = True
+
+            follow_up = (
+                "If that was a backend selection question, reply with the "
+                "LOOMQ-CONSTRAINTS line described in your instructions. If it "
+                "was a request for a circuit, reply with the program and a "
+                "LOOMQ-EXPECT line. Otherwise repeat your answer unchanged."
+            )
+
+        else:
             break
 
         if attempt == MAX_ATTEMPTS - 1 or time.monotonic() > deadline:
             break
 
-        # Retry with the actual discrepancy. "Wrong" teaches the model
-        # nothing; the observed and intended distributions usually get it
-        # fixed on the first retry.
         messages = messages + [
             {
                 "role": "assistant",
@@ -1453,12 +1500,7 @@ Official backend capability data:
             },
             {
                 "role": "user",
-                "content": (
-                    f"That is not correct yet: {problem}. "
-                    "Remember that the rightmost character of an outcome is "
-                    "classical bit c[0]. Send the corrected program, and a "
-                    "matching LOOMQ-EXPECT line."
-                ),
+                "content": follow_up,
             },
         ]
 
@@ -1467,9 +1509,9 @@ Official backend capability data:
     return _EXPECT_LINE.sub("", content).rstrip() + "\n"
 
 
-def _model_reply(messages: List[Dict[str, str]]) -> str:
+def _model_reply(messages: List[Dict[str, str]], deadline: float) -> str:
 
-    response = _chat_completion(messages)
+    response = _chat_completion(messages, deadline)
 
     try:
         content = response["choices"][0]["message"]["content"]
