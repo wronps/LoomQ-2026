@@ -21,3 +21,16 @@ antlr4-python3-runtime==4.9.2
 spinqit==0.2.4
 
 pyqpanda==3.8.5
+
+# Image size note. spinqit pulls in torch, and on Linux pip resolves torch to
+# the CUDA build: measured on Ubuntu with python:3.10 the install is 5.2 GB, of
+# which 3.4 GB is NVIDIA CUDA libraries that nothing in this project uses.
+# Switching to the CPU-only wheel brings it to 1.4 GB and installs faster
+# (66s vs 84s on the same machine), with all three SDKs still importing.
+#
+# It is left off by default because it adds a second package host that has to
+# be reachable at build time, and a build failure costs more than a large
+# image. To enable it, uncomment these two lines:
+#
+# --extra-index-url https://download.pytorch.org/whl/cpu
+# torch==2.13.0+cpu
