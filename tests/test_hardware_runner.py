@@ -173,5 +173,36 @@ class Wiring(unittest.TestCase):
         self.assertIn("MEASURE q[0],c[0]", ORIGINIR)
 
 
+class SimulatorGuard(unittest.TestCase):
+    """The cloud lists simulators next to the chips; evidence must not use one."""
+
+    def test_simulator_backends_are_known(self):
+        for name in ("full_amplitude", "partial_amplitude", "single_amplitude"):
+            self.assertIn(name, runner.SIMULATOR_BACKENDS)
+
+    def test_a_real_chip_is_not_mistaken_for_a_simulator(self):
+        for name in ("WK_C180", "WK_C180_2", "HanYuan_01", "PQPUMESH8"):
+            self.assertNotIn(name.lower(), runner.SIMULATOR_BACKENDS)
+
+    def test_submitting_to_a_simulator_is_refused(self):
+        class Args:
+            status = False
+            chip = "full_amplitude"
+            circuit = str(SK / "circuits" / "bell.qasm")
+            shots = 1024
+            dry_run = True
+            no_wait = False
+            query = None
+            out = None
+            poll = 1.0
+            timeout = 10.0
+        with self.assertRaises(runner.HardwareError) as caught:
+            runner.run(Args())
+        self.assertIn("模拟器", str(caught.exception))
+
+    def test_the_default_backend_is_a_real_chip(self):
+        self.assertNotIn(runner.DEFAULT_BACKEND.lower(), runner.SIMULATOR_BACKENDS)
+
+
 if __name__ == "__main__":
     unittest.main()

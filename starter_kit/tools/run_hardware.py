@@ -43,6 +43,12 @@ TOKEN_VARIABLE = "LOOMQ_ORIGINQ_TOKEN"
 DEFAULT_BACKEND = "WK_C180"
 BACKEND_ID = "originq_wukong"
 
+# The cloud lists simulators alongside the chips. Evidence produced on one of
+# these is not hardware evidence, and submitting it as such would be a false
+# claim, so they are refused rather than quietly accepted.
+SIMULATOR_BACKENDS = {"full_amplitude", "partial_amplitude", "single_amplitude",
+                      "noise_simulator", "mps"}
+
 PLATFORM_HINTS = (
     ("maintenance", "该芯片正在维护。任务没有提交，额度也没有消耗——用 --status 看看还有哪台在线。"),
     ("offline", "该芯片当前离线。用 --status 列出在线的芯片，再用 --chip 换一台。"),
@@ -217,16 +223,35 @@ def run(args) -> int:
         if not available:
             print("  平台没有返回任何芯片。")
             return 1
-        print("  芯片            在线")
-        for name, up in sorted(available.items()):
-            print("  %-14s %s" % (name, "是" if up else "否（维护/离线）"))
-        online = [n for n, up in available.items() if up]
+        chips = {n: up for n, up in available.items()
+                 if n.lower() not in SIMULATOR_BACKENDS}
+        simulators = {n: up for n, up in available.items()
+                      if n.lower() in SIMULATOR_BACKENDS}
+
+        print("  真机芯片（真机分只认这些）")
+        for name, up in sorted(chips.items()):
+            print("    %-18s %s" % (name, "在线" if up else "维护/离线"))
+        if simulators:
+            print("  云端模拟器（不计真机分）")
+            for name, up in sorted(simulators.items()):
+                print("    %-18s %s" % (name, "在线" if up else "维护/离线"))
+
+        online = [n for n, up in chips.items() if up]
         print()
-        print("  可用：%s" % ("、".join(online) if online else "无，稍后再试"))
+        if online:
+            print("  可提交：%s" % "、".join(sorted(online)))
+        else:
+            print("  当前没有真机在线，稍后再试。")
         return 0
 
     if not args.circuit:
         raise HardwareError("--circuit is required unless you pass --status")
+
+    if args.chip.lower() in SIMULATOR_BACKENDS:
+        raise HardwareError(
+            "%s 是云端模拟器，不是真机。真机分只认真实芯片（比如 WK_C180）——"
+            "用模拟器结果当真机证据是虚假申报。用 --status 看哪台芯片在线。"
+            % args.chip)
 
     qasm = Path(args.circuit).read_text(encoding="utf-8")
     circuit, originir = adapter._compile_for(qasm, "originq", "native")
