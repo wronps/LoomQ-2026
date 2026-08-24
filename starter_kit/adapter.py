@@ -24,7 +24,13 @@ import json
 import math
 import os
 import re
+import time
 import uuid
+
+
+# Formal scoring allows 120 seconds per case; leave room for the final reply.
+CASE_BUDGET_SECONDS = 100.0
+MAX_ATTEMPTS = 3
 
 
 SUPPORTED_TARGETS = (
@@ -630,6 +636,163 @@ def _compile_for(qasm_str: str, target: str, dialect: str) -> Tuple[Dict[str, An
 
 
 # ============================================================
+# L1 : reference simulator
+# ============================================================
+#
+# Exact, dependency-free and instant. L2 uses it to check its own generated
+# circuits: a vendor SDK would be slower, and the scoring environment only
+# guarantees the model service is reachable.
+#
+# Basis index bit j is qubit j, so an outcome string built as c[n-1]...c[0]
+# already matches the competition bit order.
+
+_SQRT1_2 = 1.0 / math.sqrt(2.0)
+
+
+def _single_qubit_matrix(name: str, params: Tuple[float, ...]):
+
+    if name == "h":
+        return (_SQRT1_2, _SQRT1_2, _SQRT1_2, -_SQRT1_2)
+
+    if name == "x":
+        return (0j, 1 + 0j, 1 + 0j, 0j)
+
+    if name == "s":
+        return (1 + 0j, 0j, 0j, 1j)
+
+    if name == "sdg":
+        return (1 + 0j, 0j, 0j, -1j)
+
+    if name == "t":
+        return (1 + 0j, 0j, 0j, cmath.exp(1j * math.pi / 4))
+
+    if name == "tdg":
+        return (1 + 0j, 0j, 0j, cmath.exp(-1j * math.pi / 4))
+
+    if name == "u1":
+        return (1 + 0j, 0j, 0j, cmath.exp(1j * params[0]))
+
+    if name == "rz":
+        return (cmath.exp(-0.5j * params[0]), 0j, 0j, cmath.exp(0.5j * params[0]))
+
+    if name == "ry":
+        half = params[0] / 2.0
+        return (
+            complex(math.cos(half)),
+            complex(-math.sin(half)),
+            complex(math.sin(half)),
+            complex(math.cos(half)),
+        )
+
+    raise ValueError(f"not a single-qubit gate: {name}")
+
+
+def _statevector(circuit: Dict[str, Any]) -> List[complex]:
+
+    state = [0j] * (1 << circuit["n_qubits"])
+    state[0] = 1 + 0j
+
+    for op in circuit["ops"]:
+
+        if op[0] != "gate":
+            continue
+
+        _, name, qubits, params = op
+
+        if name in ("cx", "ccx"):
+            *controls, target = qubits
+            bit = 1 << target
+
+            for index in range(len(state)):
+                if index & bit:
+                    continue
+
+                if all((index >> control) & 1 for control in controls):
+                    partner = index | bit
+                    state[index], state[partner] = state[partner], state[index]
+
+            continue
+
+        if name == "cu1":
+            a, b = qubits
+            phase = cmath.exp(1j * params[0])
+
+            for index in range(len(state)):
+                if (index >> a) & 1 and (index >> b) & 1:
+                    state[index] *= phase
+
+            continue
+
+        if name == "swap":
+            a, b = qubits
+
+            for index in range(len(state)):
+                if ((index >> a) & 1) and not ((index >> b) & 1):
+                    partner = index ^ (1 << a) ^ (1 << b)
+                    state[index], state[partner] = state[partner], state[index]
+
+            continue
+
+        m00, m01, m10, m11 = _single_qubit_matrix(name, params)
+        bit = 1 << qubits[0]
+
+        for index in range(len(state)):
+            if index & bit:
+                continue
+
+            partner = index | bit
+            low, high = state[index], state[partner]
+            state[index] = m00 * low + m01 * high
+            state[partner] = m10 * low + m11 * high
+
+    return state
+
+
+def _ideal_distribution(circuit: Dict[str, Any]) -> Dict[str, float]:
+
+    measurements = _measurement_pairs(circuit)
+
+    if not measurements:
+        raise ValueError("circuit has no measurement")
+
+    width = circuit["n_clbits"] or (max(clbit for _, clbit in measurements) + 1)
+    distribution: Dict[str, float] = {}
+
+    for index, amplitude in enumerate(_statevector(circuit)):
+
+        weight = abs(amplitude) ** 2
+
+        if weight <= 1e-15:
+            continue
+
+        bits = ["0"] * width
+
+        for qubit, clbit in measurements:
+            if (index >> qubit) & 1:
+                bits[width - 1 - clbit] = "1"
+
+        key = "".join(bits)
+        distribution[key] = distribution.get(key, 0.0) + weight
+
+    return distribution
+
+
+def _hellinger_fidelity(observed: Dict[str, float], expected: Dict[str, float]) -> float:
+
+    keys = set(observed) | set(expected)
+
+    distance = (
+        sum(
+            (observed.get(key, 0.0) ** 0.5 - expected.get(key, 0.0) ** 0.5) ** 2
+            for key in keys
+        )
+        ** 0.5
+    ) / (2.0 ** 0.5)
+
+    return max(0.0, min(1.0, 1.0 - distance))
+
+
+# ============================================================
 # L1 : backends
 # ============================================================
 
@@ -886,6 +1049,118 @@ def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
 # L2
 # ============================================================
 
+_QASM_BLOCK = re.compile(r"OPENQASM\s+2\.0\s*;.*", re.DOTALL | re.IGNORECASE)
+_FENCE = re.compile(r"```[a-zA-Z0-9_+-]*\s*(.*?)```", re.DOTALL)
+_EXPECT_LINE = re.compile(r"^[ \t]*LOOMQ-EXPECT:[ \t]*(\[[^\]]*\])[ \t]*$", re.MULTILINE)
+
+ACCEPT_FIDELITY = 0.999
+
+
+def _extract_qasm(text: str) -> Optional[str]:
+    """
+    Recover an OpenQASM 2.0 program from a model reply.
+    """
+
+    for fenced in _FENCE.findall(text):
+        match = _QASM_BLOCK.search(fenced)
+
+        if match:
+            return match.group(0).strip()
+
+    match = _QASM_BLOCK.search(text)
+
+    if not match:
+        return None
+
+    body = match.group(0)
+    fence = body.find("```")
+
+    if fence >= 0:
+        body = body[:fence]
+
+    return body.strip()
+
+
+def _expected_outcomes(text: str) -> Optional[Dict[str, float]]:
+    """
+    Read the LOOMQ-EXPECT line into a uniform target distribution.
+    """
+
+    match = _EXPECT_LINE.search(text)
+
+    if not match:
+        return None
+
+    try:
+        outcomes = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(outcomes, list) or not outcomes:
+        return None
+
+    states = [str(item).strip() for item in outcomes]
+
+    if any(not state or set(state) - {"0", "1"} for state in states):
+        return None
+
+    if len({len(state) for state in states}) != 1:
+        return None
+
+    share = 1.0 / len(states)
+
+    return {state: share for state in states}
+
+
+def _check_circuit(reply: str) -> Tuple[Optional[str], str]:
+    """
+    Verify a generated circuit against the outcomes the model claimed.
+
+    Returns (qasm, problem). An empty problem means it checked out. The
+    check runs on the reference simulator, so it is exact rather than
+    sampled and the threshold is close to unity.
+    """
+
+    qasm = _extract_qasm(reply)
+
+    if qasm is None:
+        return None, "the reply contained no OpenQASM 2.0 program"
+
+    try:
+        circuit = _parse_qasm2(qasm)
+    except ValueError as exc:
+        return qasm, f"the program does not parse: {exc}"
+
+    if not _measurement_pairs(circuit):
+        return qasm, "the circuit never measures into the classical register"
+
+    expected = _expected_outcomes(reply)
+
+    if expected is None:
+        # Nothing exact to compare against; a well-formed measuring circuit
+        # is as far as an honest check can go.
+        return qasm, ""
+
+    observed = _ideal_distribution(circuit)
+
+    if _hellinger_fidelity(observed, expected) >= ACCEPT_FIDELITY:
+        return qasm, ""
+
+    return qasm, (
+        "on a noiseless simulator the program produces "
+        f"{_format_distribution(observed)} but LOOMQ-EXPECT claims "
+        f"{_format_distribution(expected)}"
+    )
+
+
+def _format_distribution(distribution: Dict[str, float], limit: int = 6) -> str:
+
+    ranked = sorted(distribution.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    body = ", ".join(f"{state}:{weight:.3f}" for state, weight in ranked)
+
+    return "{" + body + (", ..." if len(distribution) > limit else "") + "}"
+
+
 def _chat_completion(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """
     Call the model service.
@@ -941,10 +1216,20 @@ The program must:
 - start with OPENQASM 2.0;
 - include "qelib1.inc";
 - declare all required qreg and creg registers;
-- use valid OpenQASM 2.0 gate syntax;
+- use only these gates: h, x, s, sdg, t, tdg, rz, ry, cx, cu1, swap, ccx;
 - include measurement operations when measurement is requested.
 
 Return the complete program rather than an incomplete fragment.
+
+After the program, on its own final line, state the measurement outcomes a
+perfect circuit would produce, as:
+
+LOOMQ-EXPECT: ["000", "111"]
+
+List every outcome with non-zero probability, writing each bit string with
+the RIGHTMOST character as classical bit c[0]. A 3-qubit GHZ state is
+["000", "111"]; a 2-qubit Bell state is ["00", "11"]; the basis state |101>
+is ["101"]. This line is checked automatically, so it must match the program.
 
 2. OPENQASM REPAIR
 
@@ -996,6 +1281,48 @@ Official backend capability data:
             "content": prompt,
         },
     ]
+
+    deadline = time.monotonic() + CASE_BUDGET_SECONDS
+
+    content = ""
+
+    for attempt in range(MAX_ATTEMPTS):
+
+        content = _model_reply(messages)
+
+        qasm, problem = _check_circuit(content)
+
+        if qasm is None or not problem:
+            # Either this is not a circuit task at all, or the circuit
+            # checked out. Nothing to retry.
+            break
+
+        if attempt == MAX_ATTEMPTS - 1 or time.monotonic() > deadline:
+            break
+
+        # Retry with the actual discrepancy. "Wrong" teaches the model
+        # nothing; the observed and intended distributions usually get it
+        # fixed on the first retry.
+        messages = messages + [
+            {
+                "role": "assistant",
+                "content": content,
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"That is not correct yet: {problem}. "
+                    "Remember that the rightmost character of an outcome is "
+                    "classical bit c[0]. Send the corrected program, and a "
+                    "matching LOOMQ-EXPECT line."
+                ),
+            },
+        ]
+
+    return _EXPECT_LINE.sub("", content).rstrip() + "\n"
+
+
+def _model_reply(messages: List[Dict[str, str]]) -> str:
 
     response = _chat_completion(messages)
 
