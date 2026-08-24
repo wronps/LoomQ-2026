@@ -2,6 +2,58 @@
 
 > SheNicest 2026 夏季千人烈变黑客松 · 正式赛题（选手分发版）
 
+## 快速开始（评委看这里）
+
+```bash
+pip install -r starter_kit/requirements.txt
+python3 -m unittest discover -s tests
+```
+
+第二条不装任何 SDK 也能跑——依赖厂商 SDK 的用例会自动跳过。装上依赖后全部执行。
+
+官方公开自测：
+
+```bash
+cd starter_kit && python3 evaluator.py --target spinq,originq,braket
+```
+
+L2 需要模型服务，环境变量与正式评测一致（代码里没有硬编码任何地址、密钥或模型名）：
+
+```bash
+export LOOMQ_LLM_BASE_URL=<endpoint>
+export LOOMQ_LLM_API_KEY=<key>
+export LOOMQ_LLM_MODEL=<model>
+```
+
+### 试一试
+
+```bash
+python3 starter_kit/tools/loomq_web.py     # 网页，自动开浏览器，无需构建也无需联网加载资源
+python3 starter_kit/tools/loomq_chat.py    # 命令行，无桌面环境时用
+```
+
+用大白话描述一个量子实验，它会写电路、自己在无噪声模拟器上核对、画出线路图，
+再帮你真跑在已安装的后端上。
+
+### Bonus：量子 RISC-V 扩展指令
+
+```bash
+python3 starter_kit/qx_compiler.py            # 把混合程序编译成一条融合指令流并运行
+python3 -m unittest tests.test_qx_extension   # 端到端测试
+```
+
+编码规格见 [`starter_kit/QX_EXTENSION.md`](starter_kit/QX_EXTENSION.md)。
+
+### 实现说明
+
+架构、每一处非显然设计的理由、以及已知限制，见
+[`starter_kit/ARCHITECTURE.md`](starter_kit/ARCHITECTURE.md)。
+
+macOS 上跑 SpinQ 后端需要先
+`export DYLD_LIBRARY_PATH=<site-packages>/spinqit`（arm64 wheel 的 rpath 问题，
+Linux 无此问题）。
+
+
 ## 包内容
 
 | 文件 / 目录 | 说明 |
