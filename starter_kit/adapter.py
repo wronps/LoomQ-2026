@@ -437,16 +437,14 @@ class _ClassicalParser:
         self._pop("if")
         self._pop("(")
 
-        left = self.parse_expression()
+        condition = self.parse_expression()
 
-        operator = self._pop()
-
-        if operator not in ("==", "!="):
+        if condition[0] not in ("==", "!="):
             raise ValueError(
                 "if condition must use == or !="
             )
 
-        right = self.parse_expression()
+        operator, left, right = condition
 
         self._pop(")")
         self._pop("{")
@@ -484,6 +482,22 @@ class _ClassicalParser:
         )
 
     def parse_expression(self) -> Any:
+
+        node = self.parse_additive()
+
+        if self._peek() in ("==", "!="):
+
+            operator = self._pop()
+
+            return (
+                operator,
+                node,
+                self.parse_additive(),
+            )
+
+        return node
+
+    def parse_additive(self) -> Any:
 
         node = self.parse_atom()
 
@@ -707,6 +721,44 @@ def _compile_expression(
         assembly.append(
             f"{instruction} {target}, {target}, {right}"
         )
+
+        state["next_temp"] = mark
+
+        return target
+
+    if kind in ("==", "!="):
+
+        # A comparison used as a value. There is no set-less-than in the
+        # instruction subset, so branch around two immediate loads.
+        _compile_expression(
+            node[1],
+            assembly,
+            state,
+            target,
+        )
+
+        mark = state["next_temp"]
+
+        right = _compile_expression(
+            node[2],
+            assembly,
+            state,
+        )
+
+        hit_label = _new_label(state, "CMP")
+        done_label = _new_label(state, "CMPEND")
+
+        branch = "beq" if kind == "==" else "bne"
+
+        assembly.append(
+            f"{branch} {target}, {right}, {hit_label}"
+        )
+
+        assembly.append(f"li {target}, 0")
+        assembly.append(f"j {done_label}")
+        assembly.append(f"{hit_label}:")
+        assembly.append(f"li {target}, 1")
+        assembly.append(f"{done_label}:")
 
         state["next_temp"] = mark
 
