@@ -1051,7 +1051,9 @@ def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
 
 _QASM_BLOCK = re.compile(r"OPENQASM\s+2\.0\s*;.*", re.DOTALL | re.IGNORECASE)
 _FENCE = re.compile(r"```[a-zA-Z0-9_+-]*\s*(.*?)```", re.DOTALL)
-_EXPECT_LINE = re.compile(r"^[ \t]*LOOMQ-EXPECT:[ \t]*(\[[^\]]*\])[ \t]*$", re.MULTILINE)
+# Matches the marker line whatever follows it, so a malformed payload is
+# still stripped from the reply instead of leaking to the user.
+_EXPECT_LINE = re.compile(r"^[ \t]*LOOMQ-EXPECT:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
 
 ACCEPT_FIDELITY = 0.999
 
@@ -1164,7 +1166,7 @@ def _format_distribution(distribution: Dict[str, float], limit: int = 6) -> str:
 QUEUE_RANK = {"none": 0, "minutes_to_hours": 1, "hours": 2}
 
 _CONSTRAINT_LINE = re.compile(
-    r"^[ \t]*LOOMQ-CONSTRAINTS:[ \t]*(\{.*\})[ \t]*$", re.MULTILINE
+    r"^[ \t]*LOOMQ-CONSTRAINTS:[ \t]*(.*?)[ \t]*$", re.MULTILINE
 )
 
 
