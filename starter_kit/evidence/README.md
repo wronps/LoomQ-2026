@@ -19,7 +19,7 @@
 每个有效真机平台计 5 分，最多两个平台。模拟器不计真机分。每个平台复制并填写一次下面的信息：
 
 ```text
-平台名称：本源悟空（originq_wukong，chip_id 72）
+平台名称：本源悟空（originq_wukong，芯片 WK_C180）
 平台 job ID：[跑完后从下面命令的输出里填]
 运行时间：[填写，带时区]
 shots：8192
@@ -34,18 +34,28 @@ shots：8192
 提交命令（Token 只从环境变量读，不作为参数、不写进任何文件、不打印）：
 
 ```bash
+pip install pyqpanda3                     # 只有生成真机证据才需要
+
 export LOOMQ_ORIGINQ_TOKEN=<你的 API Token>
+python3 starter_kit/tools/run_hardware.py --status          # 哪些芯片在线
 python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --dry-run
-python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --shots 8192
+python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --shots 8192 --no-wait
+python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --shots 8192 --query <job_id>
 ```
 
-先跑 `--dry-run` 确认要提交的 OriginIR，再去掉这个参数真提交。走异步接口拿 task id，
-所以 job_id 可以在本源量子云控制台溯源。命令跑完会打印实测主峰与理想分布的对比。
+`--status` 列出所有芯片和在线状态，不提交任何任务。`--dry-run` 显示会提交的 OriginIR。
+`--no-wait` 提交完就返回并打印 job_id；排队要小时级，之后用 `--query` 随时取回，
+断线不影响。命令跑完会打印实测主峰与理想分布的对比。
 
-说明：本源云接口返回的是概率分布而非计数，工具会按 shots 换算成整数计数并让总和
-精确等于 shots，同时把**平台原始返回**另存一份，`meta.platform_result_form` 记录
-了实际收到的是哪种形式。真机接入没有接进 `adapter.run()`——评分用的 run() 必须始终
-走本地模拟器，否则环境里一旦有凭证，评测跑分就会变成排队提交真机任务。
+用的是 pyqpanda3 的 `QCloudService`，和 L1 后端用的 pyqpanda 是两个包，两者可以共存。
+pyqpanda3 **刻意不放进 requirements.txt**——评测容器从不运行这个工具。
+
+真机接入没有接进 `adapter.run()`：评分用的 run() 每个 case 都会被调用，环境里一旦有
+凭证就会变成排队提交真机任务。有测试检查 `adapter.py` 里不出现 `QCloudService`、
+`pyqpanda3` 和 Token 变量名。
+
+平台返回的是整数计数，工具原样使用；如果总数和请求的 shots 对不上会**报错而不是
+悄悄缩放**，同时把平台原始返回另存一份。
 
 建议把文件放进 `evidence/files/`，比如：
 
