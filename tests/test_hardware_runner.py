@@ -173,5 +173,41 @@ class SeparableSubmission(unittest.TestCase):
         self.assertEqual(result["job_id"], "collected-later-42")
 
 
+class PlatformErrors(unittest.TestCase):
+    """Platform-side failures must read as sentences, not tracebacks."""
+
+    def test_maintenance_is_explained_and_says_nothing_was_spent(self):
+        message = runner.explain(RuntimeError(
+            "json parse failed : Quantum computer under maintenance. "
+            "Please try again later."))
+        self.assertIn("维护", message)
+        self.assertIn("额度", message)
+        self.assertIn("--status", message)
+
+    def test_known_conditions_are_recognised(self):
+        for raw, expected in (
+            ("chip is offline", "离线"),
+            ("invalid token", "Token"),
+            ("insufficient balance", "额度"),
+            ("qubit count exceeds chip", "比特"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertIn(expected, runner.explain(RuntimeError(raw)))
+
+    def test_unknown_errors_still_surface_the_original_text(self):
+        message = runner.explain(RuntimeError("something entirely new"))
+        self.assertIn("something entirely new", message)
+
+    def test_the_platform_wording_is_always_preserved(self):
+        for raw in ("under maintenance", "chip offline", "weird failure"):
+            with self.subTest(raw=raw):
+                self.assertIn(raw, runner.explain(RuntimeError(raw)))
+
+    def test_status_probe_is_offered_and_needs_no_circuit(self):
+        source = (SK / "tools" / "run_hardware.py").read_text()
+        self.assertIn('"--status"', source)
+        self.assertNotIn('parser.add_argument("--circuit", required=True', source)
+
+
 if __name__ == "__main__":
     unittest.main()

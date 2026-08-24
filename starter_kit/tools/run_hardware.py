@@ -92,6 +92,47 @@ def to_counts(raw: Dict[str, Any], shots: int, n_clbits: int) -> Tuple[Dict[str,
     return adapter._counts_by_clbit(counts, n_clbits), form
 
 
+PLATFORM_HINTS = (
+    ("maintenance", "该芯片正在维护。任务没有提交，额度也没有消耗——过一段时间用 "
+                    "--status 探一下，能通就再提交。"),
+    ("offline", "该芯片当前离线。稍后再试，或换一台（--chip 见 --help）。"),
+    ("token", "Token 被平台拒绝。确认它没过期，并且是「API Token」而不是登录密码。"),
+    ("balance", "额度不足。检查本源量子云控制台的剩余额度。"),
+    ("qubit", "电路用的比特数超出该芯片，或映射失败。"),
+)
+
+
+def explain(error: Exception) -> str:
+    """Turn a platform-side failure into a sentence the user can act on."""
+    raw = str(error)
+    lowered = raw.lower()
+    for needle, advice in PLATFORM_HINTS:
+        if needle in lowered:
+            return "%s\n  （平台原话：%s）" % (advice, raw.strip())
+    return "平台返回了一个错误：%s" % raw.strip()
+
+
+def chip_status(chip: str) -> str:
+    """Probe the chip without submitting anything."""
+    try:
+        import pyqpanda as pq
+    except ImportError as exc:
+        raise HardwareError("pyqpanda is not installed: %s" % exc) from exc
+
+    machine = pq.QCloud()
+    machine.init_qvm(token())
+    try:
+        topology = machine.get_realtime_topology(CHIPS[chip])
+    except Exception as exc:
+        raise HardwareError(explain(exc)) from exc
+    finally:
+        try:
+            machine.finalize()
+        except Exception:
+            pass
+    return topology
+
+
 def submit(qasm: str, shots: int, chip: str, poll: float, timeout: float,
            dry_run: bool, task_id: str = None, no_wait: bool = False) -> Dict[str, Any]:
     """Submit a circuit, or collect an already-submitted one.
@@ -122,8 +163,12 @@ def submit(qasm: str, shots: int, chip: str, poll: float, timeout: float,
         if task_id is None:
             # Async so the task id comes back: the rules require a job_id that
             # can be traced in the platform console.
-            task_id = machine.async_real_chip_measure(
-                program, shots, chip_id=CHIPS[chip], task_name="LoomQ L1 evidence")
+            try:
+                task_id = machine.async_real_chip_measure(
+                    program, shots, chip_id=CHIPS[chip],
+                    task_name="LoomQ L1 evidence")
+            except Exception as exc:
+                raise HardwareError(explain(exc)) from exc
             print("  task id: %s" % task_id)
             print("  keep this id. If the wait is interrupted the task is not")
             print("  lost - collect it later with --query %s" % task_id)
@@ -137,8 +182,11 @@ def submit(qasm: str, shots: int, chip: str, poll: float, timeout: float,
         deadline = time.monotonic() + timeout
         raw = None
         while time.monotonic() < deadline:
-            status, result, message = machine.query_task_state_result(
-                str(task_id), is_real_chip_task=True)
+            try:
+                status, result, message = machine.query_task_state_result(
+                    str(task_id), is_real_chip_task=True)
+            except Exception as exc:
+                raise HardwareError(explain(exc)) from exc
             if result:
                 raw = result
                 break
@@ -193,7 +241,7 @@ def compare_with_ideal(qasm: str, counts: Dict[str, int], shots: int, top_k: int
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--circuit", required=True, help="path to a .qasm file")
+    parser.add_argument("--circuit", help="path to a .qasm file (not needed with --status)")
     parser.add_argument("--shots", type=int, default=8192)
     parser.add_argument("--chip", default="wukong", choices=sorted(CHIPS))
     parser.add_argument("--out", help="evidence path (default: evidence/files/<name>)")
@@ -205,7 +253,22 @@ def main() -> int:
                         help="submit, print the task id, do not wait for the queue")
     parser.add_argument("--query", metavar="TASK_ID",
                         help="collect a task submitted earlier instead of submitting")
+    parser.add_argument("--status", action="store_true",
+                        help="probe whether the chip is up; submit nothing")
     args = parser.parse_args()
+
+    if not args.circuit and not args.status:
+        parser.error("--circuit is required unless you pass --status")
+
+    if args.status:
+        try:
+            topology = chip_status(args.chip)
+        except HardwareError as exc:
+            print("  %s 不可用：%s" % (args.chip, exc), file=sys.stderr)
+            return 1
+        print("  %s (chip_id %d) 在线，可以提交。" % (args.chip, CHIPS[args.chip]))
+        print("  实时拓扑：%s" % str(topology)[:200])
+        return 0
 
     qasm = Path(args.circuit).read_text(encoding="utf-8")
 
