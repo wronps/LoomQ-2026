@@ -450,12 +450,13 @@ class _ClassicalParser:
 
         condition = self.parse_expression()
 
-        if condition[0] not in ("==", "!="):
-            raise ValueError(
-                "if condition must use == or !="
-            )
+        if condition[0] in ("==", "!="):
+            operator, left, right = condition
 
-        operator, left, right = condition
+        else:
+            # A condition that is not already a comparison is true when it is
+            # non-zero. Raising here would lose the whole case instead.
+            operator, left, right = "!=", condition, ("immediate", 0)
 
         self._pop(")")
         self._pop("{")
