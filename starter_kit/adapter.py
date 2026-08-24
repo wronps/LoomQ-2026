@@ -630,6 +630,202 @@ def _compile_for(qasm_str: str, target: str, dialect: str) -> Tuple[Dict[str, An
 
 
 # ============================================================
+# L1 : backends
+# ============================================================
+
+# Canonical ids from backend_capabilities.json. The result schema wants these
+# rather than the bare target name.
+SIMULATOR_IDS = {
+    "spinq": "spinq_taurus_simulator",
+    "originq": "originq_local_simulator",
+    "braket": "braket_local_simulator",
+}
+
+
+class MissingBackendError(RuntimeError):
+    """
+    The vendor SDK for a target is not installed.
+
+    Raised instead of returning invented numbers: a result carrying is_mock
+    or an untraceable job id scores zero anyway, so failing loudly is
+    strictly better than failing quietly.
+    """
+
+
+def _counts_by_qubit(
+    raw_counts: Dict[str, int],
+    measurements: List[Tuple[int, int]],
+    n_clbits: int,
+    qubit_order: List[int],
+) -> Dict[str, int]:
+    """
+    Convert keys indexed by qubit position into competition bit order.
+
+    Braket and SpinQ both put qubit 0 leftmost, which is the reverse of the
+    required c[n-1]...c[0]. Going through the measurement map rather than
+    reversing the string keeps a non-diagonal mapping such as
+    `measure q[0] -> c[1];` correct too.
+    """
+
+    position = {qubit: index for index, qubit in enumerate(qubit_order)}
+    width = n_clbits or len(qubit_order)
+    converted: Dict[str, int] = {}
+
+    for raw_key, value in raw_counts.items():
+
+        key = str(raw_key)
+
+        if len(key) != len(qubit_order):
+            raise ValueError(
+                f"backend key {raw_key!r} has width {len(key)} "
+                f"but {len(qubit_order)} qubits were measured"
+            )
+
+        bits = ["0"] * width
+
+        for qubit, clbit in measurements:
+
+            if qubit not in position:
+                raise ValueError(f"qubit {qubit} missing from the backend key layout")
+
+            bits[width - 1 - clbit] = key[position[qubit]]
+
+        normalised = "".join(bits)
+        converted[normalised] = converted.get(normalised, 0) + int(value)
+
+    return converted
+
+
+def _counts_by_clbit(raw_counts: Dict[str, int], n_clbits: int) -> Dict[str, int]:
+    """
+    pyQPanda already returns c[n-1]...c[0]; only padding is needed.
+    """
+
+    converted: Dict[str, int] = {}
+
+    for raw_key, value in raw_counts.items():
+        key = str(raw_key).zfill(n_clbits)
+        converted[key] = converted.get(key, 0) + int(value)
+
+    return converted
+
+
+def _measurement_pairs(circuit: Dict[str, Any]) -> List[Tuple[int, int]]:
+    return [(op[1], op[2]) for op in circuit["ops"] if op[0] == "measure"]
+
+
+def _run_spinq(circuit: Dict[str, Any], native: str, shots: int) -> Tuple[Dict[str, int], str]:
+    """
+    SpinQit's QASM compiler takes a file path, not a string, and the result
+    object carries no job id, so a local one is generated.
+    """
+
+    try:
+        from spinqit import BasicSimulatorConfig, get_basic_simulator, get_compiler
+    except ImportError as exc:
+        raise MissingBackendError(f"spinqit is not installed: {exc}") from exc
+
+    import tempfile
+
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".qasm", delete=False, encoding="utf-8"
+    )
+
+    try:
+        handle.write(native)
+        handle.close()
+        intermediate = get_compiler("qasm").compile(handle.name, 0)
+    finally:
+        os.unlink(handle.name)
+
+    config = BasicSimulatorConfig()
+    config.configure_shots(shots)
+
+    result = get_basic_simulator().execute(intermediate, config)
+
+    raw = {str(key): int(value) for key, value in result.counts.items()}
+    width = len(next(iter(raw)))
+
+    if width == circuit["n_qubits"]:
+        order = list(range(circuit["n_qubits"]))
+    else:
+        order = sorted({qubit for qubit, _ in _measurement_pairs(circuit)})
+
+    counts = _counts_by_qubit(raw, _measurement_pairs(circuit), circuit["n_clbits"], order)
+
+    return counts, f"spinq-local-{uuid.uuid4().hex[:12]}"
+
+
+def _run_originq(circuit: Dict[str, Any], native: str, shots: int) -> Tuple[Dict[str, int], str]:
+
+    try:
+        import pyqpanda as pq
+    except ImportError as exc:
+        raise MissingBackendError(f"pyqpanda is not installed: {exc}") from exc
+
+    machine = pq.CPUQVM()
+    machine.init_qvm()
+
+    try:
+        program = pq.convert_originir_str_to_qprog(native, machine)
+
+        if isinstance(program, (list, tuple)):
+            program = program[0]
+
+        clbits = machine.get_allocate_cbits()
+        raw = machine.run_with_configuration(program, clbits, shots)
+        raw_counts = {str(key): int(value) for key, value in raw.items()}
+    finally:
+        machine.finalize()
+
+    counts = _counts_by_clbit(raw_counts, circuit["n_clbits"])
+
+    return counts, f"originq-local-{uuid.uuid4().hex[:12]}"
+
+
+def _run_braket(circuit: Dict[str, Any], native: str, shots: int) -> Tuple[Dict[str, int], str]:
+
+    try:
+        from braket.devices import LocalSimulator
+        from braket.ir.openqasm import Program
+    except ImportError as exc:
+        raise MissingBackendError(f"amazon-braket-sdk is not installed: {exc}") from exc
+
+    result = LocalSimulator().run(Program(source=native), shots=shots).result()
+
+    raw = {str(key): int(value) for key, value in result.measurement_counts.items()}
+    order = [int(qubit) for qubit in result.measured_qubits]
+
+    counts = _counts_by_qubit(raw, _measurement_pairs(circuit), circuit["n_clbits"], order)
+
+    return counts, str(result.task_metadata.id)
+
+
+BACKEND_RUNNERS = {
+    "spinq": _run_spinq,
+    "originq": _run_originq,
+    "braket": _run_braket,
+}
+
+
+def _circuit_depth(circuit: Dict[str, Any]) -> int:
+
+    frontier = [0] * max(circuit["n_qubits"], 1)
+
+    for op in circuit["ops"]:
+
+        if op[0] != "gate":
+            continue
+
+        layer = max(frontier[index] for index in op[2]) + 1
+
+        for index in op[2]:
+            frontier[index] = layer
+
+    return max(frontier, default=0)
+
+
+# ============================================================
 # L1
 # ============================================================
 
@@ -648,7 +844,7 @@ def transpile(qasm_str: str, target: str) -> str:
 
 def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
     """
-    Simple simulator for the public L1 circuits.
+    Transpile the circuit and execute it on the target's local simulator.
     """
 
     if target not in SUPPORTED_TARGETS:
@@ -657,30 +853,31 @@ def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
     if not isinstance(shots, int) or isinstance(shots, bool) or shots <= 0:
         raise ValueError("shots must be a positive integer")
 
-    if "qreg q[3]" in qasm_str:
-        states = ["000", "111"]
+    circuit, native = _compile_for(qasm_str, target, "native")
 
-    elif "qreg q[2]" in qasm_str:
-        states = ["00", "11"]
+    if not _measurement_pairs(circuit):
+        raise ValueError("circuit has no measurement; nothing to sample")
 
-    else:
-        raise ValueError("Unsupported circuit")
+    counts, job_id = BACKEND_RUNNERS[target](circuit, native, shots)
 
-    counts: Dict[str, int] = {}
+    total = sum(counts.values())
 
-    for _ in range(shots):
-        state = random.choice(states)
-        counts[state] = counts.get(state, 0) + 1
+    if total != shots:
+        raise ValueError(f"backend returned {total} shots but {shots} were requested")
+
+    gate_count = sum(1 for op in circuit["ops"] if op[0] == "gate")
 
     return {
-        "backend": target,
-        "job_id": "local-simulator",
+        "backend": SIMULATOR_IDS[target],
+        "job_id": job_id,
         "shots": shots,
         "counts": counts,
         "bit_order": "little",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "meta": {
-            "is_mock": False
+            "transpiled_gates": gate_count,
+            "depth": _circuit_depth(circuit),
+            "qubits": circuit["n_qubits"],
         },
     }
 
