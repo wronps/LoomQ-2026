@@ -145,5 +145,33 @@ class Wiring(unittest.TestCase):
         self.assertEqual(runner.BACKEND_IDS["wukong"], "originq_wukong")
 
 
+class SeparableSubmission(unittest.TestCase):
+    """The Wukong queue is hours long; a dropped connection must not cost the run."""
+
+    def test_query_and_no_wait_are_offered(self):
+        source = (SK / "tools" / "run_hardware.py").read_text()
+        self.assertIn('"--query"', source)
+        self.assertIn('"--no-wait"', source)
+
+    def test_submit_accepts_an_existing_task_id(self):
+        import inspect
+        signature = inspect.signature(runner.submit)
+        self.assertIn("task_id", signature.parameters)
+        self.assertIn("no_wait", signature.parameters)
+        self.assertIsNone(signature.parameters["task_id"].default)
+        self.assertFalse(signature.parameters["no_wait"].default)
+
+    def test_result_is_buildable_from_a_collected_task(self):
+        """Collecting later must produce the same evidence as waiting inline."""
+        circuit, originir = runner.adapter._compile_for(BELL, "originq", "native")
+        collected = {"dry_run": False, "circuit": circuit, "originir": originir,
+                     "chip_id": 72, "task_id": "collected-later-42",
+                     "raw": {"00": 0.49, "11": 0.47, "01": 0.02, "10": 0.02}}
+        result = runner.build_result(collected, 8192, "wukong")
+        valid, why = evaluator.validate_schema(result)
+        self.assertTrue(valid, why)
+        self.assertEqual(result["job_id"], "collected-later-42")
+
+
 if __name__ == "__main__":
     unittest.main()

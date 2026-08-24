@@ -93,7 +93,13 @@ def to_counts(raw: Dict[str, Any], shots: int, n_clbits: int) -> Tuple[Dict[str,
 
 
 def submit(qasm: str, shots: int, chip: str, poll: float, timeout: float,
-           dry_run: bool) -> Dict[str, Any]:
+           dry_run: bool, task_id: str = None, no_wait: bool = False) -> Dict[str, Any]:
+    """Submit a circuit, or collect an already-submitted one.
+
+    The Wukong queue is hours long, so submission and collection are
+    separable: --no-wait prints the task id and stops, --query picks a task
+    back up later. A dropped connection never costs the run.
+    """
     circuit, originir = adapter._compile_for(qasm, "originq", "native")
 
     if dry_run:
@@ -113,12 +119,19 @@ def submit(qasm: str, shots: int, chip: str, poll: float, timeout: float,
         if isinstance(program, (list, tuple)):
             program = program[0]
 
-        # Async so the task id comes back: the rules require a job_id that can
-        # be traced in the platform console.
-        task_id = machine.async_real_chip_measure(
-            program, shots, chip_id=CHIPS[chip], task_name="LoomQ L1 evidence")
+        if task_id is None:
+            # Async so the task id comes back: the rules require a job_id that
+            # can be traced in the platform console.
+            task_id = machine.async_real_chip_measure(
+                program, shots, chip_id=CHIPS[chip], task_name="LoomQ L1 evidence")
+            print("  task id: %s" % task_id)
+            print("  keep this id. If the wait is interrupted the task is not")
+            print("  lost - collect it later with --query %s" % task_id)
 
-        print("  task id: %s" % task_id)
+        if no_wait:
+            return {"dry_run": False, "originir": originir, "circuit": circuit,
+                    "chip_id": CHIPS[chip], "task_id": str(task_id), "raw": None}
+
         print("  waiting for the queue (Ctrl-C is safe, the task keeps running)")
 
         deadline = time.monotonic() + timeout
@@ -135,8 +148,8 @@ def submit(qasm: str, shots: int, chip: str, poll: float, timeout: float,
 
         if raw is None:
             raise HardwareError(
-                "still queued after %gs. The task is not lost - re-query %s later."
-                % (timeout, task_id))
+                "still queued after %gs. The task is not lost - collect it with "
+                "--query %s" % (timeout, task_id))
     finally:
         try:
             machine.finalize()
@@ -188,13 +201,17 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=7200.0)
     parser.add_argument("--dry-run", action="store_true",
                         help="show what would be submitted, spend no quota")
+    parser.add_argument("--no-wait", action="store_true",
+                        help="submit, print the task id, do not wait for the queue")
+    parser.add_argument("--query", metavar="TASK_ID",
+                        help="collect a task submitted earlier instead of submitting")
     args = parser.parse_args()
 
     qasm = Path(args.circuit).read_text(encoding="utf-8")
 
     try:
         outcome = submit(qasm, args.shots, args.chip, args.poll, args.timeout,
-                         args.dry_run)
+                         args.dry_run, task_id=args.query, no_wait=args.no_wait)
     except HardwareError as exc:
         print("  %s" % exc, file=sys.stderr)
         return 1
@@ -206,6 +223,12 @@ def main() -> int:
         print("  token:   %s" % ("set" if os.environ.get(TOKEN_VARIABLE) else "NOT SET"))
         print("  --- OriginIR that would be submitted ---")
         print("\n".join("    " + line for line in outcome["originir"].splitlines()))
+        return 0
+
+    if outcome["raw"] is None:
+        print("  submitted; not waiting. Collect it with:")
+        print("    python3 %s --circuit %s --shots %d --query %s"
+              % (Path(__file__).name, args.circuit, args.shots, outcome["task_id"]))
         return 0
 
     result = build_result(outcome, args.shots, args.chip)
