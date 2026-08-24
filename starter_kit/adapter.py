@@ -998,6 +998,12 @@ def compile_hybrid(
             state,
         )
 
+    if not assembly:
+
+        # A program with no classical work still has to hand back a loadable
+        # listing; an empty string is rejected as an invalid return value.
+        assembly.append("addi x0, x0, 0")
+
     return (
         quantum_operations,
         "\n".join(assembly),
