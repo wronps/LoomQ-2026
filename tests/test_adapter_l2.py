@@ -300,8 +300,8 @@ class ContractSurface(unittest.TestCase):
     def test_requirements_are_exactly_pinned(self):
         for line in (SK / "requirements.txt").read_text().splitlines():
             line = line.split("#")[0].strip()
-            if not line:
-                continue
+            if not line or line.startswith("-"):
+                continue   # pip directives such as --extra-index-url
             with self.subTest(line=line):
                 self.assertIn("==", line)
                 self.assertNotIn(">=", line)
