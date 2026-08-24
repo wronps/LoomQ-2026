@@ -23,8 +23,6 @@ import os
 import random
 import re
 
-from llm_client import chat_completion
-
 
 SUPPORTED_TARGETS = (
     "spinq",
@@ -113,6 +111,23 @@ def run(qasm_str: str, target: str, shots: int) -> Dict[str, Any]:
 # ============================================================
 # L2
 # ============================================================
+
+def _chat_completion(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    Call the model service.
+
+    The transport is imported here rather than at module scope so that a
+    missing or broken llm_client only breaks L2. Importing it at the top
+    makes `import adapter` fail outright, taking L1 and L3 down with it.
+    """
+
+    try:
+        from .llm_client import chat_completion
+    except ImportError:
+        from llm_client import chat_completion
+
+    return chat_completion(messages)
+
 
 def agent_chat(prompt: str) -> str:
     """
@@ -208,7 +223,7 @@ Official backend capability data:
         },
     ]
 
-    response = chat_completion(messages)
+    response = _chat_completion(messages)
 
     try:
         content = response["choices"][0]["message"]["content"]
