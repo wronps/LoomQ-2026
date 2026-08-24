@@ -1835,7 +1835,11 @@ class _ClassicalParser:
 
 
 TEMP_TOP = 31
-TEMP_FLOOR = 20
+
+# Lowest register a temporary may use when the block reads no c[k] at all.
+# x10 is c[0]'s home, so x11 is the first register that is always free. The
+# real floor is raised per program from the highest c[k] actually referenced.
+TEMP_FLOOR = 11
 
 
 def _highest_classical_bit(node: Any) -> int:
@@ -2226,6 +2230,8 @@ def compile_hybrid(
 
     highest_bit = _highest_classical_bit(programs)
 
+    # A c[k] the block never reads cannot be clobbered, so the floor follows
+    # the highest index actually referenced rather than the register width.
     state["temp_floor"] = max(
         TEMP_FLOOR,
         11 + highest_bit,
