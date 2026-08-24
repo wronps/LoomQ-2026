@@ -5,3 +5,6 @@
 **/.DStore
 __pycache__/
 *.py[cod]
+
+# Local interactive walkthrough, not part of the submission
+walkthrough-competition-overview.html
