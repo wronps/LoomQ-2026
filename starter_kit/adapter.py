@@ -505,6 +505,23 @@ class _ClassicalParser:
 
         token = self._peek()
 
+        if token in ("+", "-"):
+
+            # Unary sign. The grammar admits negative integer literals, and
+            # rejecting them loses the whole case to an exception.
+            self._pop()
+
+            operand = self.parse_atom()
+
+            if token == "-":
+
+                if operand[0] == "immediate":
+                    return ("immediate", -operand[1])
+
+                return ("-", ("immediate", 0), operand)
+
+            return operand
+
         if token == "(":
 
             self._pop("(")
