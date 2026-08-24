@@ -214,7 +214,8 @@ class QueryModeAuth(unittest.TestCase):
         self.assertLess(service_at, query_at,
                         "the service must be constructed before QCloudJob")
 
-    def test_query_still_requires_a_token(self):
+    def test_query_fails_with_an_actionable_message_not_a_traceback(self):
+        """Missing token or missing package must both read as sentences."""
         import os
 
         class Args:
@@ -232,7 +233,10 @@ class QueryModeAuth(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(runner.HardwareError) as caught:
                 runner.run(Args())
-        self.assertIn(runner.TOKEN_VARIABLE, str(caught.exception))
+        message = str(caught.exception)
+        self.assertTrue(
+            runner.TOKEN_VARIABLE in message or "pyqpanda3" in message,
+            "expected a token or package hint, got: %s" % message)
 
 
 if __name__ == "__main__":

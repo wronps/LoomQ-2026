@@ -94,6 +94,16 @@ def _cloud():
     return QCloudService(token())
 
 
+def _job(job_id: str):
+    """Rebuild a job handle for an id from an earlier submission."""
+    try:
+        from pyqpanda3.qcloud import QCloudJob
+    except ImportError as exc:
+        raise HardwareError(
+            "pyqpanda3 is not installed (pip install pyqpanda3): %s" % exc) from exc
+    return QCloudJob(job_id)
+
+
 def list_backends() -> Dict[str, bool]:
     try:
         return dict(_cloud().backends())
@@ -265,15 +275,15 @@ def run(args) -> int:
         print("\n".join("    " + line for line in originir.splitlines()))
         return 0
 
-    from pyqpanda3.qcloud import QCloudJob
-
-    # The service constructor is what installs the credentials; a QCloudJob
-    # built without it fails inside libcurl with no useful message. So build
-    # the service first even when only collecting.
+    # _cloud() checks for pyqpanda3 and for the token, in that order, and both
+    # failures come back as an actionable sentence. The service constructor is
+    # also what installs the credentials: a QCloudJob built without it dies
+    # inside libcurl with no useful message. So this comes first even when
+    # only collecting a job.
     service = _cloud()
 
     if args.query:
-        job = QCloudJob(args.query)
+        job = _job(args.query)
         print("  collecting %s" % args.query)
     else:
         available = {}
