@@ -537,17 +537,33 @@ class _ClassicalParser:
         )
 
 
+TEMP_TOP = 31
+TEMP_FLOOR = 20
+
+
 def _new_temp(state: Dict[str, int]) -> str:
     """
     Allocate a temporary RISC-V register.
+
+    Temporaries are a stack growing down from x31. Callers record
+    state["next_temp"] before compiling a subtree and restore it afterwards,
+    which frees every temporary that subtree used while leaving the result
+    register alone.
+
+    Running out raises. The instruction subset has no load or store, so a
+    temporary cannot be spilled anywhere; wrapping the allocator around
+    instead would overwrite a value that is still live and produce silently
+    wrong arithmetic.
     """
 
     register = state["next_temp"]
 
-    state["next_temp"] += 1
+    if register < state.get("temp_floor", TEMP_FLOOR):
+        raise ValueError(
+            "expression nests too deeply for the available registers"
+        )
 
-    if state["next_temp"] > 31:
-        state["next_temp"] = 20
+    state["next_temp"] -= 1
 
     return f"x{register}"
 
@@ -570,13 +586,19 @@ def _compile_expression(
     state: Dict[str, int],
     target: str | None = None,
 ) -> str:
+    """
+    Evaluate `node` into `target`, allocating a temporary when none is given.
+
+    `target` is always a scratch register, never r1..r9, so writing the left
+    operand into it cannot destroy an operand the right side still needs.
+    """
+
+    if target is None:
+        target = _new_temp(state)
 
     kind = node[0]
 
     if kind == "immediate":
-
-        if target is None:
-            target = _new_temp(state)
 
         assembly.append(
             f"li {target}, {node[1]}"
@@ -588,12 +610,10 @@ def _compile_expression(
 
         source = f"x{node[1]}"
 
-        if target is None or target == source:
-            return source
-
-        assembly.append(
-            f"addi {target}, {source}, 0"
-        )
+        if target != source:
+            assembly.append(
+                f"addi {target}, {source}, 0"
+            )
 
         return target
 
@@ -601,31 +621,29 @@ def _compile_expression(
 
         source = f"x{10 + node[1]}"
 
-        if target is None or target == source:
-            return source
-
-        assembly.append(
-            f"addi {target}, {source}, 0"
-        )
+        if target != source:
+            assembly.append(
+                f"addi {target}, {source}, 0"
+            )
 
         return target
 
     if kind in ("+", "-"):
 
-        left = _compile_expression(
+        _compile_expression(
             node[1],
             assembly,
             state,
+            target,
         )
+
+        mark = state["next_temp"]
 
         right = _compile_expression(
             node[2],
             assembly,
             state,
         )
-
-        if target is None:
-            target = _new_temp(state)
 
         instruction = (
             "add"
@@ -634,8 +652,10 @@ def _compile_expression(
         )
 
         assembly.append(
-            f"{instruction} {target}, {left}, {right}"
+            f"{instruction} {target}, {target}, {right}"
         )
+
+        state["next_temp"] = mark
 
         return target
 
@@ -660,12 +680,19 @@ def _compile_statements(
 
             expression = statement[2]
 
-            _compile_expression(
+            mark = state["next_temp"]
+
+            value = _compile_expression(
                 expression,
                 assembly,
                 state,
-                target=f"x{destination[1:]}",
             )
+
+            assembly.append(
+                f"addi x{destination[1:]}, {value}, 0"
+            )
+
+            state["next_temp"] = mark
 
             continue
 
@@ -679,6 +706,8 @@ def _compile_statements(
                 then_branch,
                 else_branch,
             ) = statement
+
+            mark = state["next_temp"]
 
             left_register = _compile_expression(
                 left,
@@ -713,6 +742,8 @@ def _compile_statements(
                 f"{right_register}, "
                 f"{else_label}"
             )
+
+            state["next_temp"] = mark
 
             _compile_statements(
                 then_branch,
@@ -809,7 +840,8 @@ def compile_hybrid(
     assembly: List[str] = []
 
     state = {
-        "next_temp": 20,
+        "next_temp": TEMP_TOP,
+        "temp_floor": TEMP_FLOOR,
         "next_label": 0,
     }
 
