@@ -19,14 +19,33 @@
 每个有效真机平台计 5 分，最多两个平台。模拟器不计真机分。每个平台复制并填写一次下面的信息：
 
 ```text
-平台名称：[填写]
-平台 job ID：[填写]
+平台名称：本源悟空（originq_wukong，chip_id 72）
+平台 job ID：[跑完后从下面命令的输出里填]
 运行时间：[填写，带时区]
-shots：[填写]
-实际执行的 QASM：[填写仓库内路径]
-平台返回的原始结果：[填写仓库内路径]
-任务页截图：[选填，填写仓库内路径]
+shots：8192
+实际执行的 QASM：starter_kit/circuits/bell.qasm
+                 实际提交的 OriginIR 由本项目中间层生成，存为
+                 evidence/files/wukong-bell.ir.txt
+平台返回的原始结果：evidence/files/wukong-bell.raw.json（未经任何修改）
+                   归一化后的统一 Schema：evidence/files/wukong-bell.json
+任务页截图：[选填]
 ```
+
+提交命令（Token 只从环境变量读，不作为参数、不写进任何文件、不打印）：
+
+```bash
+export LOOMQ_ORIGINQ_TOKEN=<你的 API Token>
+python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --dry-run
+python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --shots 8192
+```
+
+先跑 `--dry-run` 确认要提交的 OriginIR，再去掉这个参数真提交。走异步接口拿 task id，
+所以 job_id 可以在本源量子云控制台溯源。命令跑完会打印实测主峰与理想分布的对比。
+
+说明：本源云接口返回的是概率分布而非计数，工具会按 shots 换算成整数计数并让总和
+精确等于 shots，同时把**平台原始返回**另存一份，`meta.platform_result_form` 记录
+了实际收到的是哪种形式。真机接入没有接进 `adapter.run()`——评分用的 run() 必须始终
+走本地模拟器，否则环境里一旦有凭证，评测跑分就会变成排队提交真机任务。
 
 建议把文件放进 `evidence/files/`，比如：
 
