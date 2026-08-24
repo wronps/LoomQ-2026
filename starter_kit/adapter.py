@@ -541,6 +541,34 @@ TEMP_TOP = 31
 TEMP_FLOOR = 20
 
 
+def _highest_classical_bit(node: Any) -> int:
+    """
+    Largest c[k] index referenced anywhere in a parsed classical program.
+
+    c[k] lives in x(10 + k), so it decides how far down the temporary stack
+    may grow before it would start overwriting injected measurement results.
+    """
+
+    highest = -1
+
+    if isinstance(node, list):
+        for item in node:
+            highest = max(highest, _highest_classical_bit(item))
+
+        return highest
+
+    if not isinstance(node, tuple):
+        return highest
+
+    if node[0] == "classical_bit":
+        return node[1]
+
+    for item in node[1:]:
+        highest = max(highest, _highest_classical_bit(item))
+
+    return highest
+
+
 def _new_temp(state: Dict[str, int]) -> str:
     """
     Allocate a temporary RISC-V register.
@@ -845,6 +873,8 @@ def compile_hybrid(
         "next_label": 0,
     }
 
+    programs = []
+
     for block in classical_blocks:
 
         tokens = _tokenize_classical(
@@ -855,7 +885,24 @@ def compile_hybrid(
             tokens
         )
 
-        statements = parser.parse_program()
+        programs.append(
+            parser.parse_program()
+        )
+
+    highest_bit = _highest_classical_bit(programs)
+
+    state["temp_floor"] = max(
+        TEMP_FLOOR,
+        11 + highest_bit,
+    )
+
+    if state["temp_floor"] > TEMP_TOP:
+        raise ValueError(
+            f"c[{highest_bit}] maps to x{10 + highest_bit}, "
+            "leaving no temporary registers"
+        )
+
+    for statements in programs:
 
         _compile_statements(
             statements,
