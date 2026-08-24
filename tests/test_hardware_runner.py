@@ -204,5 +204,36 @@ class SimulatorGuard(unittest.TestCase):
         self.assertNotIn(runner.DEFAULT_BACKEND.lower(), runner.SIMULATOR_BACKENDS)
 
 
+class QueryModeAuth(unittest.TestCase):
+    """A QCloudJob built without an initialised service dies inside libcurl."""
+
+    def test_query_path_builds_the_service_first(self):
+        source = (SK / "tools" / "run_hardware.py").read_text()
+        service_at = source.index("service = _cloud()")
+        query_at = source.index("if args.query:")
+        self.assertLess(service_at, query_at,
+                        "the service must be constructed before QCloudJob")
+
+    def test_query_still_requires_a_token(self):
+        import os
+
+        class Args:
+            status = False
+            chip = "WK_C180"
+            circuit = str(SK / "circuits" / "bell.qasm")
+            shots = 8192
+            dry_run = False
+            no_wait = False
+            query = "DEADBEEF"
+            out = None
+            poll = 1.0
+            timeout = 5.0
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(runner.HardwareError) as caught:
+                runner.run(Args())
+        self.assertIn(runner.TOKEN_VARIABLE, str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

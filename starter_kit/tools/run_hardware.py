@@ -267,11 +267,15 @@ def run(args) -> int:
 
     from pyqpanda3.qcloud import QCloudJob
 
+    # The service constructor is what installs the credentials; a QCloudJob
+    # built without it fails inside libcurl with no useful message. So build
+    # the service first even when only collecting.
+    service = _cloud()
+
     if args.query:
         job = QCloudJob(args.query)
         print("  collecting %s" % args.query)
     else:
-        service = _cloud()
         available = {}
         try:
             available = dict(service.backends())
