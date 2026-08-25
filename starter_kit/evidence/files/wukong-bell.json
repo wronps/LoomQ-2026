@@ -1,0 +1,30 @@
+{
+  "backend": "originq_wukong",
+  "job_id": "7C20A0AC39435820F4A762A417C188D8",
+  "shots": 8192,
+  "counts": {
+    "00": 4301,
+    "01": 0,
+    "10": 9,
+    "11": 3882
+  },
+  "bit_order": "little",
+  "timestamp": "2026-08-25T00:07:02Z",
+  "meta": {
+    "transpiled_gates": 2,
+    "depth": 2,
+    "qubits": 2,
+    "hardware": true,
+    "chip": "WK_C180",
+    "result_accessor": "get_probs",
+    "measure_qubits": "[]",
+    "timing_info": {
+      "aioTimeStamp": "9:1787615805278;8:1787615794812;7:1787615794545;2:1787615801674;",
+      "cirExecuteTime": "null",
+      "pulseTime": "null",
+      "qpuRunTime": "2479",
+      "startTime": "1787615734469",
+      "totalTime": "70919"
+    }
+  }
+}
