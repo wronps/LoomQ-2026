@@ -113,17 +113,23 @@ That is not correct yet: on a noiseless simulator the program produces
 
 ### 真实模型验证状态
 
-意图生成这条路已经对**真实的 OpenAI-compatible 模型**验过（正式评分用
-`deepseek-v4-flash`，接口一致）：模型照格式输出了 `LOOMQ-EXPECT` 行，
-自验完成了语义比对并通过，一次调用命中、没有触发重试。产出的电路经我们的
-解析器、参考模拟器和三个目标的转译全部通过。
+题面的三类任务**全部对真实的 OpenAI-compatible 模型实测过**（正式评分用
+`deepseek-v4-flash`，接口一致），每类都是一次调用命中、没有触发重试：
 
-`loomq_chat.py --diagnose` 会打印协议遵从情况——「声明了预期分布」为「否」时，
-自验会静默降级成只查语法，这个诊断就是为了让降级不再是隐形的。
+| 任务 | 协议遵从 | 结果 |
+|---|---|---|
+| 意图生成 | 输出了 `LOOMQ-EXPECT` | 自验语义比对通过，产出的 GHZ 态经三个目标转译全部正常 |
+| 代码纠错 | 输出了 `LOOMQ-EXPECT` | 修复产物是真的贝尔态，保住了用户声明的意图，自验通过 |
+| 智能选后端 | 输出了 `LOOMQ-CONSTRAINTS` | 代码筛表给出完整正确答案集 |
 
-代码纠错和智能选后端两类任务目前只对脚本化服务验过。选后端那条尤其值得实测：
-提示词明确要求模型不要自己报后端标识，改由代码筛表，所以模型漏掉
-`LOOMQ-CONSTRAINTS` 行时会先追问一次，追问也失败才会丢分。
+选后端那次实测顺带验证了「代码筛表」这个设计：模型自己在散文里只列出了
+`originq_local_simulator` 和 `braket_local_simulator` **两个**，漏掉了同样满足
+条件的 `spinq_taurus_simulator`（24 比特、无排队）。代码筛表补上了第三个。
+如果信模型自报标识，这道题就答漏了——`backend_capabilities.md` 里那句
+「让 LLM 按约束筛选，而不是自由发挥」不是空话。
+
+`loomq_chat.py --diagnose` 会按任务类型打印协议遵从情况。「声明了预期分布」为
+「否」时，自验会静默降级成只查语法，这个诊断就是为了让降级不再是隐形的。
 
 ### 参考模拟器
 
