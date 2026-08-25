@@ -52,22 +52,17 @@ evidence/files/spinq-screenshot.png
 请填写：
 
 ```text
-启动界面或 CLI 的命令：python3 starter_kit/tools/loomq_web.py（网页，自动开浏览器）
-                     python3 starter_kit/tools/loomq_chat.py（命令行，无桌面环境时用）
-测试入口或页面地址：http://127.0.0.1:8760/ —— 起服务后自动打开
+启动界面或 CLI 的命令：python3 starter_kit/tools/loomq_web.py（网页）
+                     python3 starter_kit/tools/loomq_chat.py（命令行）
+测试入口或页面地址：http://127.0.0.1:8760/
 用于交互体验评测的 3 个用户任务：
-1. 输入「做一个 3 个量子比特的 GHZ 态，全部测量」，然后点「运行」。
-   它会先写电路、把线路画成标准量子线路图、自己在无噪声模拟器上核对并给出
-   预测分布，再真跑在已安装的后端上，最后把预测和实测两组柱状图放一起对比。
-2. 输入「我想制备一个贝尔态，但这段代码报错了，帮我修好：H q[0]; CX q[0] q[1]」。
-   看它在保持你声明的目标（贝尔态）不变的前提下修好代码，而不是换成一条无关电路。
-3. 输入「我要跑 15 个量子比特，还不想排队，用哪个后端？」。
-   它会列出满足条件的后端卡片并标出推荐项；可以追加
-   「那如果要真机而且不想花钱呢？」看它换一组答案。
+1. 「做一个 3 个量子比特的 GHZ 态，全部测量」，然后点「运行」
+2. 「我想制备一个贝尔态，但这段代码报错了，帮我修好：H q[0]; CX q[0] q[1]」
+3. 「我要跑 15 个量子比特，还不想排队，用哪个后端？」
 截图或演示视频：无
 ```
 
-启动前设置模型服务环境变量（代码里没有硬编码任何地址、密钥或模型名）：
+启动前设置模型服务环境变量：
 
 ```bash
 export LOOMQ_LLM_BASE_URL=<endpoint>
@@ -75,12 +70,10 @@ export LOOMQ_LLM_API_KEY=<key>
 export LOOMQ_LLM_MODEL=<model>
 ```
 
-网页无需构建、不加载任何外部资源，整页是一个自包含的 HTML 文件，服务端只用标准库，
-离线环境同样可跑。
+网页是单个自包含 HTML，服务端只用标准库，无需构建、不加载外部资源。
 
-三类任务均已对真实模型实测（各一次调用命中，无需重试）：意图生成与代码纠错都
-输出了预期分布声明并通过自验；选后端输出了约束、由代码筛表得出完整答案集。
-细节见 `starter_kit/ARCHITECTURE.md` 的「真实模型验证状态」。
+三类任务均已对真实模型实测，各一次调用命中。细节见
+`starter_kit/ARCHITECTURE.md` 的「真实模型验证状态」。
 
 工作人员会在组委会统一模型环境中运行最终代码，测试新手是否看得懂、出错后能否得到有效帮助、结果是否清楚，以及多轮回答是否一致。选手自己的对话截图只用于说明产品流程，不直接证明得分。
 
@@ -92,70 +85,23 @@ export LOOMQ_LLM_MODEL=<model>
 干净环境中的构建和启动命令：
   pip install -r starter_kit/requirements.txt
   python3 -m unittest discover -s tests
-      不装任何 SDK 也能跑，依赖厂商 SDK 的用例自动跳过；装上后 85 个用例全跑
   cd starter_kit && python3 evaluator.py --target spinq,originq,braket
-      公开自测，三级全开
 
-架构说明：全部实现在 starter_kit/adapter.py，分五段。
+架构说明：starter_kit/ARCHITECTURE.md
 
-  L1 前端
-    OpenQASM 2.0 解析器，产出与后端无关的电路结构（门、测量、寄存器宽度）。
-    白名单之外的门直接报错而不是跳过——静默丢门在 Bell/GHZ 上照样满分，
-    只会在隐藏电路上失败。角度表达式走 ast 白名单求值，不是 eval。
-
-  L1 lowering 与目标发射
-    每个平台两套 profile。`ir` 是 transpile() 的返回值，必须符合
-    target_ir_contract.md，因为组委会会自己解析并仿真这个字符串；`native`
-    是本地 SDK 真正接受的方言，比契约窄，是实测出来的：Braket 的
-    LocalSimulator 会去磁盘找 stdgates.inc（找不到就报错），且没有
-    sdg/tdg/cx；pyQPanda 的 OriginIR 解析器拒收契约允许的 SDAG/TDAG/CU1。
-    两套 profile 共用同一个 lowering pass，所以永远是同一条电路的两种渲染。
-    分解规则照抄 gate_identities.md。
-
-  L1 后端
-    三个厂商 SDK 的真实执行，加上 counts 归一化。位序有两种约定：Braket 和
-    SpinQ 返回 qubit 0 在最左的 key，pyQPanda 已经是 c[n-1]…c[0]。归一化
-    走完整的 (qubit → clbit) 映射，所以 measure q[0] -> c[1] 这种非对角
-    映射也正确。
-
-  L1 参考模拟器
-    精确、无第三方依赖。给 L2 自验用——厂商 SDK 更慢，而评测环境只保证能
-    连模型服务。
-
-  L2
-    一次模型调用同时产出电路和 LOOMQ-EXPECT（声明测量结果应该是什么），
-    在参考模拟器上比对；不符就带着实测分布和目标分布重试，上限 3 次并受
-    每 case 预算约束，单次请求超时也压进剩余预算内。选后端不靠模型背表：
-    模型只输出约束，筛选 backend_capabilities.json、排序、给出规范标识
-    全在代码里，backend_capabilities.md 里的三个样例都有对应测试。
-
-  L3
-    Hybrid-QASM 先按花括号配对把 classical 块整块抠出来（块里有分号，
-    不能先切分号），经典 mini-language 解析成 AST，编译成模拟器支持的
-    7 条指令。临时寄存器是从 x31 向下的栈，用完即释放；下界由程序实际
-    引用的最高 c[k] 决定，和注入窗口不重叠。这条 ISA 没有访存指令，
-    临时值无处 spill，所以寄存器不够时报错而不是回绕——回绕会覆盖仍然
-    存活的值，产生静默算错的结果。
-
-目标用户和使用场景：有明确问题意识、但没有量子背景的跨界开发者。他们手上是
-  标准 OpenQASM 2.0，需要的是不改一行电路就能发往三个不同平台，并拿回位序
-  统一、schema 一致的结果——而不是为每家 SDK 各写一套适配。
+目标用户和使用场景：没有量子背景、手上是标准 OpenQASM 2.0 的开发者。
+  同一条电路不改一行发往三个平台，拿回位序统一、schema 一致的结果。
 
 完整使用流程：
-  import adapter
-  adapter.transpile(qasm, "originq")   # 转成该平台的原生 IR
-  adapter.run(qasm, "braket", 8192)    # 真跑，返回统一 schema
+  adapter.transpile(qasm, "originq")          # 该平台的原生 IR
+  adapter.run(qasm, "braket", 8192)           # 真跑，统一 schema
   adapter.agent_chat("做一个 3 比特 GHZ 态")   # 自然语言进，自验过的电路出
-  adapter.compile_hybrid(hybrid_qasm)  # 量子指令序列 + RISC-V 汇编
+  adapter.compile_hybrid(hybrid_qasm)         # 量子指令序列 + RISC-V 汇编
 ```
 
-macOS 开发注意：`spinqit` 的 arm64 wheel 用了 Linux 风格的 `$ORIGIN` rpath，
-dyld 解析不了。本地跑之前先
-`export DYLD_LIBRARY_PATH=<site-packages>/spinqit`。官方 Linux 镜像没这个问题。
-
-依赖版本说明见 `starter_kit/requirements.txt` 顶部：spinqit 与
-amazon-braket-default-simulator 会各自钉死互不兼容的 antlr 运行时，两边的
-antlr 生成代码在对方运行时下会在 import 阶段就崩，所以锁的是能共存的那一组。
+测试不装 SDK 也能跑，依赖厂商 SDK 的用例自动跳过。macOS 上跑 SpinQ 后端需要
+`export DYLD_LIBRARY_PATH=<site-packages>/spinqit`，Linux 无此问题。
+依赖锁定的理由见 `starter_kit/requirements.txt` 顶部。
 
 工作人员会按最终 commit 实际构建和启动，并检查文档与代码是否一致、产品是否真的降低了量子计算的使用门槛。
 
@@ -165,38 +111,30 @@ antlr 生成代码在对方运行时下会在 import 阶段就崩，所以锁的
 
 ```text
 指令编码规格：starter_kit/QX_EXTENSION.md
-  自定义 custom-0 操作码（0x0B），R 型布局，funct3 分七类、funct7 选具体门，
-  角度以定点整数 k 表示 θ = k·π/1024。文档里两个编码示例有测试逐位核对。
 模拟器扩展实现：starter_kit/riscv_emulator_qx.py
-  官方 riscv_emulator.py 的 fork。基础七条指令行为完全不变（有测试比对两个
-  模拟器在纯经典程序上逐位一致），新增量子态、qmeas 真坍缩，以及
-  encode_instruction / decode_instruction —— 执行扩展指令时操作数先过一遍
-  编解码再执行，编不出来的指令也执行不了，文档和实现不会各说各话。
 端到端测试命令：
   python3 starter_kit/qx_compiler.py            # 编译并运行公开样例
   python3 -m unittest tests.test_qx_extension   # 21 个用例
-  端到端内容：Hybrid-QASM 编译成一条融合指令流，qmeas 直接把 c[k] 写进
-  x(10+k)，经典块从那里读并分支——测量注入不再需要外部搬运。跑 40 个不同
-  seed，两个分支都出现，r1 恒等于 105/15 且与 c[0] 一致；量子部分的分布
-  另外与解析预测对拍（600 次采样，保真度 ≥ 0.95）。
 ```
+
+自定义 custom-0 操作码把量子操作编进同一条指令流，`qmeas` 直接把 c[k] 写进
+x(10+k)，经典块从那里读——测量注入不再需要外部搬运。基础七条指令行为不变，
+有测试比对 fork 前后在纯经典程序上逐位一致。
 
 ## 新手引导与视觉叙事 Bonus
 
 请填写已有材料的路径，不要求为评分另写一套文档：
 
 ```text
-零基础首次运行指南：README.md 的「快速开始（评委看这里）」一节；网页入口开场
-  直接给三个可以照抄的提问，点一下就能走完全流程。
-量子概念解释：starter_kit/tools/loomq_web.py 的 GATE_NOTES —— 线路图下方按这条
-  电路**实际用到的门**自动列出一句话解释，不是一整页术语表。
-结果可视化：网页里从解析出的电路现画的标准量子线路图（比特线、门方框、控制点与
-  ⊕、SWAP 的叉、测量表头、引到经典线的虚线），加上预测（斜纹）与实测（实心）
-  两组柱状图并排对比，让人亲眼看到采样次数越多越接近理论值。
-错误恢复或无障碍引导：所有失败都变成一句可操作的话而不是 traceback——没配模型
-  服务时给出三行 export 命令，后端 SDK 没装时在下拉框里禁用并标出缺哪个包，
-  电路解析不了时指出具体哪条语句。页面尊重 prefers-reduced-motion，
-  有可见的键盘焦点样式，明暗两套主题的对比度都过 WCAG AA。
+零基础首次运行指南：README.md「快速开始」一节；网页入口开场给三个可照抄的提问
+量子概念解释：starter_kit/tools/loomq_web.py 的 GATE_NOTES，按电路实际用到的
+             门在线路图下方列出一句话解释
+结果可视化：网页里从解析出的电路现画的量子线路图，加预测与实测两组柱状图对比
+错误恢复或无障碍引导：失败都给可操作提示而非 traceback（未配模型服务给出
+                     export 命令、后端 SDK 未装在下拉框禁用并标出缺哪个包、
+                     电路解析失败指出具体语句）；页面尊重
+                     prefers-reduced-motion，有键盘焦点样式，明暗主题
+                     对比度均过 WCAG AA
 ```
 
 以上四项各 1 分。普通项目 README 完整不代表自动获得 Bonus。
