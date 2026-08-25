@@ -36,21 +36,12 @@ shots：8192
 任务页截图：[选填]
 ```
 
-```text
-平台名称：本源量子云 · PQPUMESH8
-平台 job ID：7062987169EECF5198B870180EE6D107
-运行时间：[取回结果后填，带时区]
-shots：8192
-实际执行的 QASM：starter_kit/circuits/bell.qasm
-                 实际提交的 OriginIR：evidence/files/pqpumesh8-bell.ir.txt
-平台返回的原始结果：evidence/files/pqpumesh8-bell.raw.json
-                   归一化后的统一 Schema：evidence/files/pqpumesh8-bell.json
-任务页截图：[选填]
-```
+> 第二台芯片 PQPUMESH8 的任务已提交（job ID
+> `7062987169EECF5198B870180EE6D107`），但结果尚未取回，因此这里不作申报。
+> 取回后会补上对应的 `evidence/files/pqpumesh8-bell.*` 三个文件。
+> 需要说明的是，PQPUMESH8 与 WK_C180 同属本源量子云，按「每个平台计 5 分」
+> 计算多半仍算一个平台；第二个平台需要另一家（如量旋云）。
 
-说明：以上两台都在本源量子云。若评分按**平台**计（题面写的是「每个有效真机平台计 5 分，
-最多两个平台」），这两条合计仍按一个平台计分；列出两条是为了提供更充分的证据，
-第二个平台仍需另一家（如量旋云）。
 
 提交命令（Token 只从环境变量读，不作为参数、不写进任何文件、不打印）：
 
