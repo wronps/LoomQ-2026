@@ -21,53 +21,21 @@
 ```text
 平台名称：本源量子云 · 悟空 WK_C180
 平台 job ID：7C20A0AC39435820F4A762A417C188D8
-             （平台内部 pilotTaskId E62623B4726C4B8A9406CF00D86A9742，见 raw.json）
-运行时间：2026-08-25 07:55:34（UTC+8）
-         排队加执行共 70.9 秒，其中 QPU 实际运行 2479 ms
+运行时间：2026-08-25 07:55:34 UTC+8
 shots：8192
-实测结果：{"00": 4301, "01": 0, "10": 9, "11": 3882}
-         主峰 00 / 11 与理想分布一致；99.89% 的采样落在正确态，
-         对真机而言噪声很小（Hellinger 保真度 0.9704）
 实际执行的 QASM：starter_kit/circuits/bell.qasm
-                 实际提交的 OriginIR 由本项目中间层生成：
-                 evidence/files/wukong-bell.ir.txt
-平台返回的原始结果：evidence/files/wukong-bell.raw.json（未经任何修改）
-                   归一化后的统一 Schema：evidence/files/wukong-bell.json
-任务页截图：[选填]
+提交给平台的 OriginIR：evidence/files/wukong-bell.ir.txt
+平台返回的原始结果：evidence/files/wukong-bell.raw.json
+归一化为统一 Schema：evidence/files/wukong-bell.json
+任务页截图：无
 ```
 
-> 第二台芯片 PQPUMESH8 的任务已提交（job ID
-> `7062987169EECF5198B870180EE6D107`），但结果尚未取回，因此这里不作申报。
-> 取回后会补上对应的 `evidence/files/pqpumesh8-bell.*` 三个文件。
-> 需要说明的是，PQPUMESH8 与 WK_C180 同属本源量子云，按「每个平台计 5 分」
-> 计算多半仍算一个平台；第二个平台需要另一家（如量旋云）。
+counts `{"00": 4301, "01": 0, "10": 9, "11": 3882}`，主峰 00 / 11 与理想分布一致。
 
+证据由 `starter_kit/tools/run_hardware.py` 生成，Token 从 `LOOMQ_ORIGINQ_TOKEN` 读，
+需要 `pip install pyqpanda3`。
 
-提交命令（Token 只从环境变量读，不作为参数、不写进任何文件、不打印）：
-
-```bash
-pip install pyqpanda3                     # 只有生成真机证据才需要
-
-export LOOMQ_ORIGINQ_TOKEN=<你的 API Token>
-python3 starter_kit/tools/run_hardware.py --status          # 哪些芯片在线
-python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --dry-run
-python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --shots 8192 --no-wait
-python3 starter_kit/tools/run_hardware.py --circuit starter_kit/circuits/bell.qasm --shots 8192 --query <job_id>
-```
-
-`--status` 列出所有芯片和在线状态，不提交任何任务。`--dry-run` 显示会提交的 OriginIR。
-`--no-wait` 提交完就返回并打印 job_id；排队要小时级，之后用 `--query` 随时取回，
-断线不影响。命令跑完会打印实测主峰与理想分布的对比。
-
-用的是 pyqpanda3 的 `QCloudService`，和 L1 后端用的 pyqpanda 是两个包，两者可以共存。
-pyqpanda3 **刻意不放进 requirements.txt**——评测容器从不运行这个工具。
-
-真机接入没有接进 `adapter.run()`：评分用的 run() 每个 case 都会被调用，环境里一旦有
-凭证就会变成排队提交真机任务。有测试检查 `adapter.py` 里不出现 `QCloudService`、
-`pyqpanda3` 和 Token 变量名。
-
-平台返回的是整数计数，工具原样使用；如果总数和请求的 shots 对不上会**报错而不是
-悄悄缩放**，同时把平台原始返回另存一份。
+PQPUMESH8 另有一次提交（job ID `7062987169EECF5198B870180EE6D107`），结果未取回，不作申报。
 
 建议把文件放进 `evidence/files/`，比如：
 
