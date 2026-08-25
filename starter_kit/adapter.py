@@ -32,6 +32,13 @@ import uuid
 CASE_BUDGET_SECONDS = 100.0
 MAX_ATTEMPTS = 3
 
+# Diagnostics from the most recent agent_chat, for the interactive entry
+# points. The graded contract is unchanged - agent_chat still returns only
+# text - but without this there is no way to see whether the model actually
+# followed the LOOMQ-EXPECT / LOOMQ-CONSTRAINTS protocol, which decides
+# whether self-verification did anything at all.
+LAST_DIAGNOSTICS = {}
+
 
 SUPPORTED_TARGETS = (
     "spinq",
@@ -1503,6 +1510,15 @@ Official backend capability data:
                 "content": follow_up,
             },
         ]
+
+    LAST_DIAGNOSTICS.clear()
+    LAST_DIAGNOSTICS.update({
+        "model_calls": attempt + 1,
+        "declared_expectation": bool(_EXPECT_LINE.search(content)),
+        "declared_constraints": bool(_CONSTRAINT_LINE.search(content)),
+        "produced_circuit": _extract_qasm(content) is not None,
+        "verification": _check_circuit(content)[1] or "passed",
+    })
 
     content = _apply_backend_selection(content, backend_data.get("backends", []))
 

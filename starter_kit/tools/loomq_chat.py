@@ -167,6 +167,8 @@ def main():
     parser.add_argument("--run", nargs="?", const="", metavar="TARGET",
                         help="also execute the produced circuit")
     parser.add_argument("--shots", type=int, default=1024)
+    parser.add_argument("--diagnose", action="store_true",
+                        help="show whether the model followed the protocol")
     args = parser.parse_args()
 
     if not args.prompt:
@@ -176,6 +178,19 @@ def main():
     if text is None:
         return 1
     show(text)
+
+    if args.diagnose:
+        info = adapter.LAST_DIAGNOSTICS
+        print("  诊断（这决定自验有没有真的生效）")
+        print("    模型调用次数      %s" % info.get("model_calls"))
+        print("    产出了电路        %s" % ("是" if info.get("produced_circuit") else "否"))
+        print("    声明了预期分布    %s%s" % (
+            "是" if info.get("declared_expectation") else "否",
+            "" if info.get("declared_expectation")
+            else "  ← 没有的话自验只能查语法，查不了语义"))
+        print("    声明了后端约束    %s" % ("是" if info.get("declared_constraints") else "否"))
+        print("    自验结论          %s" % info.get("verification"))
+        print()
 
     qasm = extract(text)
     if args.run is not None and qasm:
