@@ -181,15 +181,26 @@ def main():
 
     if args.diagnose:
         info = adapter.LAST_DIAGNOSTICS
-        print("  诊断（这决定自验有没有真的生效）")
+        circuit_task = bool(info.get("produced_circuit"))
+        backend_task = bool(info.get("declared_constraints"))
+
+        print("  诊断")
+        print("    任务类型          %s" % (
+            "生成/纠错电路" if circuit_task else
+            "选后端" if backend_task else "其他"))
         print("    模型调用次数      %s" % info.get("model_calls"))
-        print("    产出了电路        %s" % ("是" if info.get("produced_circuit") else "否"))
-        print("    声明了预期分布    %s%s" % (
-            "是" if info.get("declared_expectation") else "否",
-            "" if info.get("declared_expectation")
-            else "  ← 没有的话自验只能查语法，查不了语义"))
-        print("    声明了后端约束    %s" % ("是" if info.get("declared_constraints") else "否"))
-        print("    自验结论          %s" % info.get("verification"))
+
+        if circuit_task:
+            # LOOMQ-EXPECT only matters when there is a circuit to check.
+            declared = info.get("declared_expectation")
+            print("    声明了预期分布    %s%s" % (
+                "是" if declared else "否",
+                "" if declared else "  ← 没有的话自验只能查语法，查不了语义"))
+            print("    自验结论          %s" % info.get("verification"))
+        elif backend_task:
+            print("    声明了后端约束    是  ← 后端由代码筛表得出，不靠模型背")
+        else:
+            print("    模型既没给电路也没给约束（闲聊或无法归类）")
         print()
 
     qasm = extract(text)
