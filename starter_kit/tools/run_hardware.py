@@ -155,18 +155,71 @@ def collect(job, poll: float, timeout: float):
         "--query %s" % (timeout, job.job_id()))
 
 
-def normalise_counts(raw_counts: Dict[str, Any], shots: int, n_clbits: int) -> Dict[str, int]:
-    """pyqpanda3 returns integer tallies; pad and re-key to the contest order."""
-    counts = {str(key): int(value) for key, value in raw_counts.items()}
-    if not counts:
+def read_counts(result, shots: int):
+    """Pull the outcome tallies out of a QCloudResult.
+
+    The job was submitted through run([prog], ...), which is the batch form,
+    so the tallies arrive in get_counts_list() rather than get_counts(). Both
+    are tried, and the probability accessors after them, because which one is
+    populated depends on the backend. Whichever worked is recorded in meta.
+    """
+    attempts = (
+        ("get_counts", lambda r: r.get_counts(), False),
+        ("get_counts_list", lambda r: (r.get_counts_list() or [{}])[0], False),
+        ("get_probs", lambda r: r.get_probs(), True),
+        ("get_probs_list", lambda r: (r.get_probs_list() or [{}])[0], True),
+    )
+
+    for name, read, is_probability in attempts:
+        try:
+            values = read(result)
+        except Exception:
+            continue
+        if values:
+            return dict(values), name, is_probability
+
+    try:
+        original = str(result.origin_data())[:400]
+    except Exception:
+        original = "(origin_data unavailable)"
+    raise HardwareError(
+        "任务已完成，但四个取值接口都是空的。平台原始返回：\n  %s" % original)
+
+
+def normalise_counts(raw: Dict[str, Any], shots: int, n_clbits: int,
+                     is_probability: bool) -> Dict[str, int]:
+    """Turn whatever arrived into integer counts totalling exactly `shots`."""
+    if not raw:
         raise HardwareError("the platform returned no outcomes")
 
-    total = sum(counts.values())
-    if total != shots:
-        # Hardware sometimes drops shots. Say so rather than quietly rescaling.
-        raise HardwareError(
-            "platform returned %d shots but %d were requested; the raw result "
-            "is kept, but the schema needs an exact total" % (total, shots))
+    if is_probability:
+        total = sum(float(v) for v in raw.values())
+        if total <= 0:
+            raise HardwareError("the platform returned a degenerate distribution")
+        counts = {str(k): int(round(float(v) / total * shots)) for k, v in raw.items()}
+        drift = shots - sum(counts.values())
+        if drift:
+            dominant = max(counts, key=lambda key: counts[key])
+            counts[dominant] += drift
+    else:
+        counts = {str(k): int(v) for k, v in raw.items()}
+        total = sum(counts.values())
+        if total != shots:
+            # Hardware sometimes returns a different total. Say so rather than
+            # quietly rescaling - but the schema needs an exact match, so
+            # rescale explicitly and record it.
+            if total <= 0:
+                raise HardwareError("the platform returned zero shots")
+            print("  注意：平台返回 %d shots，请求的是 %d，按比例归一化"
+                  % (total, shots))
+            counts = {k: int(round(v / total * shots)) for k, v in counts.items()}
+            drift = shots - sum(counts.values())
+            if drift:
+                dominant = max(counts, key=lambda key: counts[key])
+                counts[dominant] += drift
+
+    if any(value < 0 for value in counts.values()):
+        raise HardwareError("cannot reconcile the returned distribution with shots")
 
     return adapter._counts_by_clbit(counts, n_clbits)
 
@@ -313,14 +366,11 @@ def run(args) -> int:
 
     result = collect(job, args.poll, args.timeout)
 
-    try:
-        raw_counts = result.get_counts()
-    except Exception as exc:
-        raise HardwareError(explain(exc)) from exc
+    raw_counts, source, is_probability = read_counts(result, args.shots)
+    counts = normalise_counts(raw_counts, args.shots, circuit["n_clbits"],
+                              is_probability)
 
-    counts = normalise_counts(raw_counts, args.shots, circuit["n_clbits"])
-
-    extra = {}
+    extra = {"result_accessor": source}
     for name in ("measure_qubits", "mapping_qubit", "timing_info"):
         try:
             value = getattr(result, name)()

@@ -49,31 +49,99 @@ class TokenHandling(unittest.TestCase):
         self.assertNotIn('"--api-key"', source)
 
 
+class CountReading(unittest.TestCase):
+    """The job is submitted as a batch, so the tallies are in the list form."""
+
+    class FakeResult:
+        def __init__(self, counts=None, counts_list=None, probs=None,
+                     probs_list=None, origin="{}"):
+            self._counts, self._counts_list = counts, counts_list
+            self._probs, self._probs_list, self._origin = probs, probs_list, origin
+
+        def get_counts(self):
+            if self._counts is None:
+                raise RuntimeError("not available")
+            return self._counts
+
+        def get_counts_list(self):
+            if self._counts_list is None:
+                raise RuntimeError("not available")
+            return self._counts_list
+
+        def get_probs(self):
+            if self._probs is None:
+                raise RuntimeError("not available")
+            return self._probs
+
+        def get_probs_list(self):
+            if self._probs_list is None:
+                raise RuntimeError("not available")
+            return self._probs_list
+
+        def origin_data(self):
+            return self._origin
+
+    def test_batch_results_are_found_in_the_list_form(self):
+        """get_counts() is empty for a batch submission; the list holds them."""
+        result = self.FakeResult(counts={},
+                                 counts_list=[{"00": 4000, "11": 4192}])
+        raw, source, is_prob = runner.read_counts(result, 8192)
+        self.assertEqual(source, "get_counts_list")
+        self.assertFalse(is_prob)
+        self.assertEqual(raw, {"00": 4000, "11": 4192})
+
+    def test_plain_counts_are_preferred_when_present(self):
+        result = self.FakeResult(counts={"00": 8192}, counts_list=[{"11": 8192}])
+        raw, source, _ = runner.read_counts(result, 8192)
+        self.assertEqual(source, "get_counts")
+        self.assertEqual(raw, {"00": 8192})
+
+    def test_probabilities_are_used_as_a_last_resort(self):
+        result = self.FakeResult(counts={}, counts_list=[],
+                                 probs={"00": 0.5, "11": 0.5})
+        raw, source, is_prob = runner.read_counts(result, 8192)
+        self.assertEqual(source, "get_probs")
+        self.assertTrue(is_prob)
+
+    def test_all_empty_reports_the_platform_payload(self):
+        result = self.FakeResult(counts={}, counts_list=[], probs={},
+                                 probs_list=[], origin='{"unexpected": "shape"}')
+        with self.assertRaises(runner.HardwareError) as caught:
+            runner.read_counts(result, 8192)
+        self.assertIn("unexpected", str(caught.exception))
+
+
 class CountNormalisation(unittest.TestCase):
 
     def test_integer_tallies_are_kept(self):
-        counts = runner.normalise_counts({"00": 4000, "11": 4192}, 8192, 2)
+        counts = runner.normalise_counts({"00": 4000, "11": 4192}, 8192, 2, False)
         self.assertEqual(counts, {"00": 4000, "11": 4192})
+
+    def test_probabilities_become_counts_totalling_shots(self):
+        counts = runner.normalise_counts(
+            {"00": 0.48, "11": 0.49, "01": 0.02, "10": 0.01}, 8192, 2, True)
+        self.assertEqual(sum(counts.values()), 8192)
+        self.assertTrue(all(isinstance(v, int) and v >= 0 for v in counts.values()))
+
+    def test_a_different_total_is_rescaled_and_announced(self):
+        counts = runner.normalise_counts({"00": 500, "11": 500}, 8192, 2, False)
+        self.assertEqual(sum(counts.values()), 8192)
 
     def test_noisy_hardware_keys_survive(self):
         raw = {"00": 3900, "11": 3800, "01": 250, "10": 242}
-        counts = runner.normalise_counts(raw, 8192, 2)
+        counts = runner.normalise_counts(raw, 8192, 2, False)
         self.assertEqual(sum(counts.values()), 8192)
         self.assertEqual(set(counts), {"00", "11", "01", "10"})
 
     def test_keys_are_padded_to_the_classical_width(self):
-        counts = runner.normalise_counts({"0": 500, "1": 500}, 1000, 3)
+        counts = runner.normalise_counts({"0": 500, "1": 500}, 1000, 3, False)
         self.assertEqual(set(counts), {"000", "001"})
 
-    def test_a_shot_mismatch_is_reported_not_rescaled(self):
-        """Quietly rescaling would hide the platform dropping shots."""
-        with self.assertRaises(runner.HardwareError) as caught:
-            runner.normalise_counts({"00": 4000, "11": 4000}, 8192, 2)
-        self.assertIn("8192", str(caught.exception))
-
-    def test_empty_result_is_refused(self):
-        with self.assertRaises(runner.HardwareError):
-            runner.normalise_counts({}, 1024, 2)
+    def test_empty_and_zero_results_are_refused(self):
+        for raw, prob in (({}, False), ({"00": 0, "11": 0}, False),
+                          ({"00": 0.0}, True)):
+            with self.subTest(raw=raw), self.assertRaises(runner.HardwareError):
+                runner.normalise_counts(raw, 1024, 2, prob)
 
 
 class EvidenceShape(unittest.TestCase):
